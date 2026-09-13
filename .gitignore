@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+*.spec
+last_game.txt
+recent_games.txt
+*.exe
+*.dll
+*.obj
+*.pdb
