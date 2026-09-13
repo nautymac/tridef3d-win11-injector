@@ -1,10 +1,13 @@
 __pycache__/
 *.pyc
-build/
-*.spec
+build/*
+build32/*
+!build/*.spec
+!build32/*.spec
 last_game.txt
 recent_games.txt
 *.exe
 *.dll
 *.obj
 *.pdb
+tridef_d3d9_hook_config.ini

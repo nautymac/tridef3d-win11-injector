@@ -60,13 +60,45 @@ def get_tridef_driver_dir():
     return os.path.join(install_apps, "TriDef", "TriDefIgnition", "Driver")
 
 
-def get_standard_dlls():
-    driver_dir = get_tridef_driver_dir()
-    return [
-        os.path.join(driver_dir, "TriDefIgnition64.dll"),
-        os.path.join(driver_dir, "TriDefD3D1164.dll"),
-        os.path.join(driver_dir, "TriDefDXGI64.dll"),
-    ]
+def get_standard_dlls(is_64bit):
+    if is_64bit:
+        driver_dir = get_tridef_driver_dir()
+        return [
+            os.path.join(driver_dir, "TriDefIgnition64.dll"),
+            os.path.join(driver_dir, "TriDefD3D1164.dll"),
+            os.path.join(driver_dir, "TriDefDXGI64.dll"),
+        ]
+    # 32-bit target: TriDef's own D3D9 activation entry point
+    # (TriDef3DSDKFunc, in TriDefD3D9.dll) turned out to be fundamentally
+    # uncallable from external code - it depends on an undocumented
+    # register value TriDefIgnition.dll's own internal dispatch sets up,
+    # which no standard __cdecl/__stdcall call from outside can replicate
+    # (see hook_dll/bridge_d3d9.cpp for the investigation that established
+    # this). hook_dll/tridef_d3d9_hook.dll is a from-scratch replacement:
+    # same depth-based Half-SBS technique, but implemented entirely with
+    # public/documented D3D9 APIs, so it doesn't depend on TriDef's D3D9
+    # code path at all.
+    return [os.path.join(get_app_dir(), "hook_dll", "tridef_d3d9_hook.dll")]
+
+
+IMAGE_FILE_MACHINE_I386 = 0x014c
+IMAGE_FILE_MACHINE_AMD64 = 0x8664
+
+
+def is_64bit_exe(exe_path):
+    """Read just enough of the PE header to get Machine type - avoids
+    depending on the third-party 'pefile' package so the frozen exe
+    doesn't need it bundled."""
+    with open(exe_path, "rb") as f:
+        f.seek(0x3C)
+        pe_offset = int.from_bytes(f.read(4), "little")
+        f.seek(pe_offset + 4)  # skip "PE\0\0"
+        machine = int.from_bytes(f.read(2), "little")
+    if machine == IMAGE_FILE_MACHINE_AMD64:
+        return True
+    if machine == IMAGE_FILE_MACHINE_I386:
+        return False
+    raise ValueError(f"unrecognized Machine type 0x{machine:x} in {exe_path}")
 
 # Helper/launcher processes to never treat as "the game" when guessing
 # which .exe in an install folder is the real one.
@@ -92,14 +124,73 @@ def get_steam_path():
     return None
 
 
+def list_all_library_folders(steam_path):
+    """Every Steam library folder (main install + any added via Steam's
+    'Storage Manager'), needed to search for a game's appmanifest when we
+    don't already know which library it's in."""
+    folders = [steam_path]
+    vdf_path = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
+    try:
+        with open(vdf_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        for m in re.finditer(r'"path"\s*"([^"]+)"', content):
+            lib_path = m.group(1).replace("\\\\", "\\")
+            if lib_path not in folders:
+                folders.append(lib_path)
+    except FileNotFoundError:
+        pass
+    return folders
+
+
+def find_appid_by_installdir(steam_path, installdir_name):
+    """Reverse-lookup a Steam appid from an install folder name by scanning
+    every library's appmanifest_*.acf files for a matching "installdir"."""
+    for lib in list_all_library_folders(steam_path):
+        for manifest_path in glob.glob(os.path.join(lib, "steamapps", "appmanifest_*.acf")):
+            try:
+                with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            m_dir = re.search(r'"installdir"\s*"([^"]+)"', content)
+            if m_dir and m_dir.group(1) == installdir_name:
+                m_id = re.search(r'"appid"\s*"(\d+)"', content)
+                if m_id:
+                    return m_id.group(1)
+    return None
+
+
 def get_tridef_game_appid(game_name):
     key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
         argument = winreg.QueryValueEx(k, "Argument")[0]
-    m = re.search(r"rungameid/(\d+)", argument)
-    if not m:
-        raise ValueError(f"couldn't find a steam appid in Argument={argument!r}")
-    return m.group(1)
+        m = re.search(r"rungameid/(\d+)", argument)
+        if m:
+            return m.group(1)
+        # Ignition doesn't always record a steam:// launch URI - some
+        # profiles just store a direct Path to the exe, even for actual
+        # Steam games (their install folder ends up under
+        # steamapps\common\<name> regardless). Fall back to reverse-
+        # looking-up the appid from that folder name via Steam's own
+        # appmanifest files, so those games work too instead of just
+        # being invisible/unlaunchable.
+        try:
+            exe_path = winreg.QueryValueEx(k, "Path")[0]
+        except FileNotFoundError:
+            exe_path = None
+    if not exe_path:
+        raise ValueError(f"no rungameid in Argument={argument!r} and no Path to fall back to")
+    installdir_name = os.path.basename(os.path.dirname(exe_path))
+    steam_path = get_steam_path()
+    if not steam_path:
+        raise ValueError("could not find Steam install path for installdir fallback")
+    appid = find_appid_by_installdir(steam_path, installdir_name)
+    if not appid:
+        raise ValueError(
+            f"couldn't find a steam appid for {game_name!r}: no rungameid in "
+            f"Argument={argument!r}, and no appmanifest matches installdir "
+            f"{installdir_name!r} (from Path={exe_path!r})")
+    return appid
 
 
 def find_library_folder_for_app(steam_path, appid):
@@ -170,20 +261,37 @@ def play3d(game_name, dry_run=False):
     image_name = os.path.basename(exe_path)
     print(f"Detected main exe: {image_name}")
 
+    is_64bit = is_64bit_exe(exe_path)
+    print(f"Architecture: {'64-bit' if is_64bit else '32-bit'}")
+
     steam_exe = os.path.join(steam_path, "steam.exe")
     launch_uri = f"steam://rungameid/{appid}"
 
-    standard_dlls = get_standard_dlls()
+    standard_dlls = get_standard_dlls(is_64bit)
     print(f"DLLs to inject:")
     for d in standard_dlls:
         exists = "OK" if os.path.exists(d) else "MISSING!"
         print(f"  [{exists}] {d}")
 
+    injector_python = None
+    if not is_64bit:
+        # A 64-bit process can't correctly compute LoadLibraryW's address
+        # inside a 32-bit (WOW64) target - the bitness of the injecting
+        # process has to match. Hand the actual injection step off to the
+        # bundled 32-bit helper.
+        helper = os.path.join(get_app_dir(), "Inject32.exe")
+        if not os.path.exists(helper):
+            print(f"ERROR: {image_name} is 32-bit but Inject32.exe is missing from {get_app_dir()}")
+            return False
+        injector_python = helper
+        print(f"32-bit target -> delegating injection to: {helper}")
+
     if dry_run:
         print("(dry run - not actually launching)")
         return True
 
-    pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls)
+    pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls,
+                                           injector_python=injector_python)
     if pid:
         print(f"\nSUCCESS: {game_name} running as PID {pid} with TriDef 3D injected.")
         return True
@@ -197,8 +305,11 @@ LAST_USED_PATH = os.path.join(get_app_dir(), "last_game.txt")
 
 def list_registered_games():
     """Every game TriDef 3D Ignition knows about (HKCU\\...\\Games\\<name>),
-    filtered to ones that look like Steam games (have a rungameid
-    Argument) so we don't list stale/non-Steam entries we can't launch."""
+    filtered to ones that look like Steam games - either a rungameid
+    Argument, or (some Ignition profiles only record this) a Path that
+    lands under a Steam library's steamapps\\common - so we don't list
+    stale/non-Steam entries we can't launch. get_tridef_game_appid()
+    handles resolving the appid for either case."""
     games = []
     key_path = r"SOFTWARE\DDD\TriDefIgnition\Games"
     try:
@@ -214,8 +325,17 @@ def list_registered_games():
                     continue
                 try:
                     with winreg.OpenKey(parent, name) as gk:
-                        argument = winreg.QueryValueEx(gk, "Argument")[0]
-                    if "rungameid" in argument:
+                        argument = ""
+                        try:
+                            argument = winreg.QueryValueEx(gk, "Argument")[0]
+                        except FileNotFoundError:
+                            pass
+                        path = ""
+                        try:
+                            path = winreg.QueryValueEx(gk, "Path")[0]
+                        except FileNotFoundError:
+                            pass
+                    if "rungameid" in argument or "steamapps" in path.lower():
                         games.append(name)
                 except OSError:
                     continue

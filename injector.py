@@ -16,6 +16,7 @@ Why this exists:
 import ctypes
 import ctypes.wintypes as wt
 import sys
+import os
 
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
 
@@ -137,6 +138,57 @@ def inject_one(hProcess, dll_path):
         return False
     print(f"     loaded OK, remote module handle = 0x{exit_code.value:x}")
     return True
+
+
+def inject_all_parallel(hProcess, dll_paths, timeout_ms=15000):
+    """Fire CreateRemoteThread for every DLL back-to-back with no wait in
+    between, then wait on all of them together at the end. Sequentially
+    waiting for each DllMain to finish before starting the next one adds
+    up fast - and against a lean engine that creates its D3D device
+    within ~1-2s of process start, that extra time is exactly what makes
+    us lose the race. Firing them all first (the OS loader serializes the
+    actual LoadLibrary work internally via the process's loader lock
+    regardless) gets everything in flight sooner."""
+    pending = []
+    for dll_path in dll_paths:
+        print(f"  -> injecting (parallel): {dll_path}")
+        path_bytes = (dll_path + "\x00").encode('utf-16-le')
+        size = len(path_bytes)
+        remote_mem = kernel32.VirtualAllocEx(hProcess, None, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+        if not remote_mem:
+            print(f"     VirtualAllocEx failed, err={ctypes.get_last_error()}")
+            continue
+        written = ctypes.c_size_t(0)
+        ok = kernel32.WriteProcessMemory(hProcess, remote_mem, path_bytes, size, ctypes.byref(written))
+        if not ok:
+            print(f"     WriteProcessMemory failed, err={ctypes.get_last_error()}")
+            continue
+        hK32 = kernel32.GetModuleHandleW("kernel32.dll")
+        loadlib_addr = kernel32.GetProcAddress(hK32, b"LoadLibraryW")
+        thread_id = wt.DWORD(0)
+        hThread = kernel32.CreateRemoteThread(hProcess, None, 0, loadlib_addr, remote_mem, 0, ctypes.byref(thread_id))
+        if not hThread:
+            print(f"     CreateRemoteThread failed, err={ctypes.get_last_error()}")
+            continue
+        pending.append((dll_path, hThread, remote_mem))
+
+    all_ok = True
+    for dll_path, hThread, remote_mem in pending:
+        result = kernel32.WaitForSingleObject(hThread, timeout_ms)
+        if result == WAIT_TIMEOUT:
+            print(f"     {dll_path}: timed out")
+            all_ok = False
+        else:
+            exit_code = wt.DWORD(0)
+            kernel32.GetExitCodeThread(hThread, ctypes.byref(exit_code))
+            if exit_code.value == 0:
+                print(f"     {dll_path}: LoadLibraryW returned NULL -> FAILED")
+                all_ok = False
+            else:
+                print(f"     {dll_path}: loaded OK, handle=0x{exit_code.value:x}")
+        kernel32.CloseHandle(hThread)
+        kernel32.VirtualFreeEx(hProcess, remote_mem, 0, MEM_RELEASE)
+    return all_ok
 
 
 def launch_suspended_and_inject(exe_path, dll_paths):
@@ -487,8 +539,29 @@ def resume_threads(handles):
         kernel32.CloseHandle(h)
 
 
+def inject_via_external_python(helper_exe, pid, dll_paths):
+    """Delegate the actual LoadLibraryW/CreateRemoteThread injection to a
+    separate, bitness-matched executable (either a compiled helper like
+    Inject32.exe, or 'python.exe injector.py' when run from source).
+    Needed for 32-bit (WOW64) targets: a 64-bit process's
+    kernel32.dll!LoadLibraryW address is meaningless inside a 32-bit
+    target's address space, so the injecting process's bitness has to
+    match the target's."""
+    import subprocess
+    if helper_exe.lower().endswith(".py"):
+        cmd = [sys.executable, helper_exe, str(pid)] + dll_paths
+    else:
+        cmd = [helper_exe, str(pid)] + dll_paths
+    print(f"  delegating injection to {cmd[0]} (bitness-matched helper)")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    print(result.stdout.strip())
+    if result.stderr.strip():
+        print(result.stderr.strip())
+    return result.returncode == 0
+
+
 def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=20, poll_s=0.001,
-                            suspend_first=False):
+                            suspend_first=False, injector_python=None):
     """Poll for a NEW process named image_name appearing and inject into it
     as fast as possible, racing to beat its own D3D device/resource
     creation. If launch_uri_or_none is given, it is triggered via
@@ -522,14 +595,17 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
             if suspend_first:
                 print(f"  suspended {len(handles)} thread(s)")
 
-            access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
-            hProcess = kernel32.OpenProcess(access, False, pid)
-            if hProcess:
-                for dll in dll_paths:
-                    inject_one(hProcess, dll)
-                kernel32.CloseHandle(hProcess)
+            if injector_python:
+                inject_via_external_python(injector_python, pid, dll_paths)
             else:
-                print(f"OpenProcess({pid}) failed err={ctypes.get_last_error()}")
+                access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
+                hProcess = kernel32.OpenProcess(access, False, pid)
+                if hProcess:
+                    for dll in dll_paths:
+                        inject_one(hProcess, dll)
+                    kernel32.CloseHandle(hProcess)
+                else:
+                    print(f"OpenProcess({pid}) failed err={ctypes.get_last_error()}")
 
             if suspend_first:
                 resume_threads(handles)
@@ -547,6 +623,9 @@ def main():
         print("  python injector.py <PID> <dll_path> [<dll_path2> ...]")
         print("  python injector.py --launch <exe_path> <dll_path> [<dll_path2> ...]")
         print("  python injector.py --debug-launch <exe_path> <dll_path> [<dll_path2> ...]")
+        print("  python injector.py --poll-launch <image_name> <steam_uri> [--injector-python <helper.exe>] <dll_path> [<dll_path2> ...]")
+        print()
+        print("(most users want play3d.py instead - this is the lower-level primitive it's built on)")
         sys.exit(1)
 
     if sys.argv[1] == '--debug-launch':
@@ -565,8 +644,14 @@ def main():
     if sys.argv[1] == '--poll-launch':
         image_name = sys.argv[2]
         launch_uri = sys.argv[3]
-        dll_paths = sys.argv[4:]
-        pid = poll_launch_and_inject(image_name, launch_uri, dll_paths)
+        rest = sys.argv[4:]
+        injector_python = None
+        if '--injector-python' in rest:
+            i = rest.index('--injector-python')
+            injector_python = rest[i + 1]
+            rest = rest[:i] + rest[i + 2:]
+        dll_paths = rest
+        pid = poll_launch_and_inject(image_name, launch_uri, dll_paths, injector_python=injector_python)
         sys.exit(0 if pid else 3)
 
     if sys.argv[1] == '--launch':
@@ -586,10 +671,13 @@ def main():
         sys.exit(2)
     print(f"OpenProcess({pid}) OK")
 
-    all_ok = True
-    for dll in dll_paths:
-        ok = inject_one(hProcess, dll)
-        all_ok = all_ok and ok
+    if len(dll_paths) > 1:
+        all_ok = inject_all_parallel(hProcess, dll_paths)
+    else:
+        all_ok = True
+        for dll in dll_paths:
+            ok = inject_one(hProcess, dll)
+            all_ok = all_ok and ok
 
     kernel32.CloseHandle(hProcess)
     sys.exit(0 if all_ok else 3)
