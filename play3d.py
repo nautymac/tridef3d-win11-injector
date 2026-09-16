@@ -61,24 +61,56 @@ def get_tridef_driver_dir():
 
 
 def get_standard_dlls(is_64bit):
+    """Injects hooks for BOTH DirectX 9 and DirectX 11 at once, rather
+    than trying to guess which one a game actually uses ahead of time.
+
+    Static analysis (checking an exe's PE import table for d3d9.dll vs
+    d3d11.dll/dxgi.dll) sounds like the obvious way to tell, but it's
+    unreliable for exactly the engines that matter most here: Unity and
+    Source both resolve their actual Direct3D backend dynamically at
+    runtime (LoadLibrary, not a static import) rather than importing it
+    directly - e.g. GoneHome.exe's own import table only lists
+    UnityPlayer.dll+KERNEL32.dll, and UnityPlayer.dll's only lists
+    OPENGL32.dll, even though the game runs on D3D11. Waiting to see
+    which D3D DLL actually gets *loaded* at runtime before injecting
+    isn't safe either: our hooks work by patching a shared vtable before
+    the game's own CreateDevice call, which the currently-proven-reliable
+    approach achieves by injecting immediately at process spawn, before
+    the game has done anything - if we instead waited for its D3D module
+    to appear, the game might already have created its device by then.
+
+    So instead: inject both hook mechanisms unconditionally. Each one
+    only ever activates if the game actually calls the matching Direct3D
+    API, so whichever one the game doesn't use just sits there loaded and
+    inert - harmless, and it sidesteps the detection problem entirely."""
+    driver_dir = get_tridef_driver_dir()
     if is_64bit:
-        driver_dir = get_tridef_driver_dir()
+        # 64-bit DirectX 9 isn't supported yet - the from-scratch hook
+        # (hook_dll/hook_d3d9.cpp) only has a 32-bit build so far (see
+        # hook_dll/build_d3d9_32.ps1) - so 64-bit games only get TriDef's
+        # own (already-working) D3D11 set.
         return [
             os.path.join(driver_dir, "TriDefIgnition64.dll"),
             os.path.join(driver_dir, "TriDefD3D1164.dll"),
             os.path.join(driver_dir, "TriDefDXGI64.dll"),
         ]
-    # 32-bit target: TriDef's own D3D9 activation entry point
-    # (TriDef3DSDKFunc, in TriDefD3D9.dll) turned out to be fundamentally
-    # uncallable from external code - it depends on an undocumented
-    # register value TriDefIgnition.dll's own internal dispatch sets up,
-    # which no standard __cdecl/__stdcall call from outside can replicate
-    # (see hook_dll/bridge_d3d9.cpp for the investigation that established
-    # this). hook_dll/tridef_d3d9_hook.dll is a from-scratch replacement:
-    # same depth-based Half-SBS technique, but implemented entirely with
-    # public/documented D3D9 APIs, so it doesn't depend on TriDef's D3D9
-    # code path at all.
-    return [os.path.join(get_app_dir(), "hook_dll", "tridef_d3d9_hook.dll")]
+    # TriDef's own D3D9 activation entry point (TriDef3DSDKFunc, in
+    # TriDefD3D9.dll) turned out to be fundamentally uncallable from
+    # external code - it depends on an undocumented register value
+    # TriDefIgnition.dll's own internal dispatch sets up, which no
+    # standard __cdecl/__stdcall call from outside can replicate (see
+    # hook_dll/bridge_d3d9.cpp for the investigation that established
+    # this), so D3D9 uses hook_dll/tridef_d3d9_hook.dll - a from-scratch
+    # replacement built entirely on public/documented D3D9 APIs - instead
+    # of TriDef's own TriDefD3D9.dll. D3D11 support (TriDefD3D11.dll)
+    # doesn't have that problem, so it uses TriDef's own real DLLs same
+    # as the 64-bit case.
+    return [
+        os.path.join(get_app_dir(), "hook_dll", "tridef_d3d9_hook.dll"),
+        os.path.join(driver_dir, "TriDefIgnition.dll"),
+        os.path.join(driver_dir, "TriDefD3D11.dll"),
+        os.path.join(driver_dir, "TriDefDXGI.dll"),
+    ]
 
 
 IMAGE_FILE_MACHINE_I386 = 0x014c
