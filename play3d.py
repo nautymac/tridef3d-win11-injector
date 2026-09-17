@@ -61,53 +61,38 @@ def get_tridef_driver_dir():
 
 
 def get_standard_dlls(is_64bit):
-    """Injects hooks for BOTH DirectX 9 and DirectX 11 at once, rather
-    than trying to guess which one a game actually uses ahead of time.
+    """Only ever loads TriDef's own real DLLs - by design, this project
+    injects actual TriDef 3D rendering, not a substitute.
 
-    Static analysis (checking an exe's PE import table for d3d9.dll vs
-    d3d11.dll/dxgi.dll) sounds like the obvious way to tell, but it's
-    unreliable for exactly the engines that matter most here: Unity and
-    Source both resolve their actual Direct3D backend dynamically at
-    runtime (LoadLibrary, not a static import) rather than importing it
-    directly - e.g. GoneHome.exe's own import table only lists
-    UnityPlayer.dll+KERNEL32.dll, and UnityPlayer.dll's only lists
-    OPENGL32.dll, even though the game runs on D3D11. Waiting to see
-    which D3D DLL actually gets *loaded* at runtime before injecting
-    isn't safe either: our hooks work by patching a shared vtable before
-    the game's own CreateDevice call, which the currently-proven-reliable
-    approach achieves by injecting immediately at process spawn, before
-    the game has done anything - if we instead waited for its D3D module
-    to appear, the game might already have created its device by then.
+    For 32-bit games this includes TriDef's own D3D9 set
+    (TriDefD3D9.dll), injected the same plain LoadLibraryW way as
+    everything else, even though earlier testing in this project found
+    that its activation entry point (TriDef3DSDKFunc) needs an explicit
+    call that only TriDef's own injector stub provides - a plain
+    LoadLibraryW load was "stable but never hooks" for the specific games
+    tested (see hook_dll/bridge_d3d9.cpp for that investigation). Left in
+    anyway since that was only confirmed for a couple of games; it's
+    possible other DX9 titles hook successfully through a different path.
+    hook_dll/hook_d3d9.cpp is a working from-scratch, non-TriDef
+    replacement that also exists in this repo, but is intentionally not
+    used here - only TriDef's own rendering is injected.
 
-    So instead: inject both hook mechanisms unconditionally. Each one
-    only ever activates if the game actually calls the matching Direct3D
-    API, so whichever one the game doesn't use just sits there loaded and
-    inert - harmless, and it sidesteps the detection problem entirely."""
+    D3D9 and D3D11 are both included for 32-bit since there's no reliable
+    way to know in advance which one a given game actually uses (see the
+    git history for why - PE import table analysis doesn't work for
+    Unity/Source, which resolve their real Direct3D backend dynamically
+    at runtime). Each only activates if the game actually calls the
+    matching Direct3D API, so including both is harmless either way."""
     driver_dir = get_tridef_driver_dir()
     if is_64bit:
-        # 64-bit DirectX 9 isn't supported yet - the from-scratch hook
-        # (hook_dll/hook_d3d9.cpp) only has a 32-bit build so far (see
-        # hook_dll/build_d3d9_32.ps1) - so 64-bit games only get TriDef's
-        # own (already-working) D3D11 set.
         return [
             os.path.join(driver_dir, "TriDefIgnition64.dll"),
             os.path.join(driver_dir, "TriDefD3D1164.dll"),
             os.path.join(driver_dir, "TriDefDXGI64.dll"),
         ]
-    # TriDef's own D3D9 activation entry point (TriDef3DSDKFunc, in
-    # TriDefD3D9.dll) turned out to be fundamentally uncallable from
-    # external code - it depends on an undocumented register value
-    # TriDefIgnition.dll's own internal dispatch sets up, which no
-    # standard __cdecl/__stdcall call from outside can replicate (see
-    # hook_dll/bridge_d3d9.cpp for the investigation that established
-    # this), so D3D9 uses hook_dll/tridef_d3d9_hook.dll - a from-scratch
-    # replacement built entirely on public/documented D3D9 APIs - instead
-    # of TriDef's own TriDefD3D9.dll. D3D11 support (TriDefD3D11.dll)
-    # doesn't have that problem, so it uses TriDef's own real DLLs same
-    # as the 64-bit case.
     return [
-        os.path.join(get_app_dir(), "hook_dll", "tridef_d3d9_hook.dll"),
         os.path.join(driver_dir, "TriDefIgnition.dll"),
+        os.path.join(driver_dir, "TriDefD3D9.dll"),
         os.path.join(driver_dir, "TriDefD3D11.dll"),
         os.path.join(driver_dir, "TriDefDXGI.dll"),
     ]
@@ -376,6 +361,20 @@ def list_registered_games():
     return games
 
 
+def get_ignition_last_game_name():
+    """TriDef Ignition writes its own "last selected game" value
+    (HKCU\\...\\Games\\LastGameName) every time you add or select a game
+    in its own UI - so right after registering a new game there, this
+    already points at it. Used to skip straight to launching that game
+    instead of making the user separately pick it again from our list."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\DDD\TriDefIgnition\Games") as k:
+            name = winreg.QueryValueEx(k, "LastGameName")[0]
+    except (FileNotFoundError, OSError):
+        return None
+    return name if name in list_registered_games() else None
+
+
 def load_last_used():
     if os.path.exists(LAST_USED_PATH):
         with open(LAST_USED_PATH, "r", encoding="utf-8") as f:
@@ -418,7 +417,16 @@ if __name__ == '__main__':
     if positional:
         game_name = positional[0]
     else:
-        game_name = prompt_for_game_name()
+        # No game named on the command line - if Ignition's own "last
+        # selected" value points at something we can actually launch
+        # (e.g. you just added/selected it in Ignition's UI), go straight
+        # to it instead of making you pick it again from the list too.
+        ignition_last = get_ignition_last_game_name()
+        if ignition_last:
+            print(f"TriDef Ignition에 마지막으로 등록/선택된 게임: {ignition_last} - 바로 실행합니다.")
+            game_name = ignition_last
+        else:
+            game_name = prompt_for_game_name()
 
     if not game_name:
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')

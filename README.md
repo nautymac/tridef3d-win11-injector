@@ -91,9 +91,13 @@ yourself for any of this to do anything.
 Play3D.exe
 ```
 
-Run it (as Administrator) with no arguments and it lists every Steam
-game you've registered in TriDef 3D Ignition — pick a number, or just
-press Enter to relaunch whatever you ran last time.
+Run it (as Administrator) with no arguments and it launches whatever
+game you most recently added or selected in TriDef 3D Ignition's own UI
+— so the flow is just "register the game in Ignition, then run
+`Play3D.exe`/`Play3D.bat`", no need to pick it again. If Ignition hasn't
+recorded a game yet, it instead lists every Steam game you've registered
+there — pick a number, or press Enter to relaunch whatever you ran last
+time through this tool.
 
 ```
 Play3D.exe "Gone Home"
