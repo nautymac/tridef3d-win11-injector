@@ -9,13 +9,30 @@ Supports **DirectX 9 (32-bit) and DirectX 11 (64-bit) games**, using TriDef's
 own real rendering DLLs for both. See [DirectX 9 support](#directx-9-support)
 for the one non-obvious trick that makes D3D9 work.
 
+## What this actually solves: the Ignition pop-up
+
+If you press **Play** in TriDef 3D Ignition on Windows 11, you get a dialog
+saying the game *"did not use Direct3D 9, 10 or 11"*, and the game runs in
+plain 2D. That pop-up is the whole reason this project exists.
+
+**This tool is a way around that pop-up.** It bypasses Ignition's broken
+launch path entirely: you still register the game in Ignition once (so its
+per-game 3D profile is available), but you launch through
+`Tridef3D_Play.exe` instead of Ignition's Play button. The injection is
+done from scratch, against the correct process, so TriDef's real DLLs hook
+the game and you get stereo 3D with no dialog at all.
+
+The pop-up isn't a licensing or compatibility check — it's a post-mortem
+report. Ignition watched the wrong process (a throwaway `steam.exe`), saw
+no Direct3D in it, and told you so. Details in
+[Why this exists](#why-this-exists).
+
 ## Quick start
 
 1. Install [TriDef 3D](https://en.wikipedia.org/wiki/TriDef_3D) (your own
    existing install/license — this project doesn't provide one).
 2. Add the game once in TriDef 3D Ignition's own UI (you never need to
-   actually launch it from there — in fact, don't; see
-   [Why this exists](#why-this-exists)).
+   actually launch it from there — in fact, don't; that's the pop-up).
 3. Run `Tridef3D_Play.exe` (as Administrator) — from
    [Releases](../../releases), no Python required.
 
@@ -31,10 +48,28 @@ number, or just press Enter. Or name the game directly:
 Tridef3D_Play.exe "Left 4 Dead"
 ```
 
-`Tridef3D_Play.bat` is a double-click-friendly wrapper. Works identically
-for 32-bit or 64-bit games — the right DLL set is picked automatically.
-`Inject32.exe` must sit in the same folder for 32-bit games (see
-[How it works](#how-it-works)).
+`Tridef3D_Play.exe` is a single self-contained executable — put it anywhere
+and run it, nothing to install. `Tridef3D_Play.bat` is just a
+double-click-friendly wrapper. Works identically for 32-bit or 64-bit games
+— the right DLL set is picked automatically. The only extra file is
+`Inject32.exe`, which must sit in the same folder **for 32-bit games only**
+(see [How it works](#how-it-works)).
+
+## Game profiles: what you get with and without one
+
+TriDef shipped ~800 hand-tuned per-game profiles, and the profile is what
+produces real depth:
+
+- **With a matching profile** — TriDef reconstructs proper stereo geometry.
+  Real depth, correct separation and convergence, adjustable with TriDef's
+  own hotkeys.
+- **Without a profile** — the image is still split side-by-side, but it's a
+  flat SBS pair with no actual depth. Both halves are effectively the same
+  view. It *looks* like 3D output to a display, but there's nothing to see
+  in stereo.
+
+So if a game injects fine yet looks flat, the injection isn't the problem —
+that title has no TriDef profile.
 
 ## Why this exists
 
@@ -50,8 +85,8 @@ reasons:
    injector the PID of the throwaway `steam.exe` launch instead, so the
    3D hook ends up watching Steam itself, not the game. (Confirmed
    directly: logging the actual argument Ignition passes shows exactly
-   one PID, and it's steam.exe's. The visible symptom is Ignition's
-   "this game did not use Direct3D 9, 10 or 11" warning — it watched the
+   one PID, and it's steam.exe's. This is the source of the
+   "this game did not use Direct3D 9, 10 or 11" pop-up — it watched the
    wrong process, which indeed never used Direct3D.)
 2. **Naive memory search.** The injector allocates memory for its payload
    by linearly scanning *upward only* from the target module's base
