@@ -31,6 +31,7 @@ import sys
 import os
 import re
 import glob
+import time
 import winreg
 
 try:
@@ -273,10 +274,18 @@ def play3d(game_name, dry_run=False):
     manifest_path = os.path.join(lib_path, "steamapps", f"appmanifest_{appid}.acf")
     installdir_name = None
     if os.path.exists(manifest_path):
-        with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
-            m = re.search(r'"installdir"\s*"([^"]+)"', f.read())
-            if m:
-                installdir_name = m.group(1)
+        # Steam rewrites the manifest right after a game exits and holds it
+        # exclusively for a moment; relaunching immediately used to die with
+        # PermissionError here. Retry briefly instead.
+        for attempt in range(10):
+            try:
+                with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+                    m = re.search(r'"installdir"\s*"([^"]+)"', f.read())
+                    if m:
+                        installdir_name = m.group(1)
+                break
+            except PermissionError:
+                time.sleep(0.3)
     if not installdir_name:
         print(f"ERROR: could not read installdir from {manifest_path}")
         return False

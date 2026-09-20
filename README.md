@@ -158,6 +158,17 @@ effect isn't engine-specific. Why Steam's embedded browser interferes with TriDe
 activation isn't understood — but the effect is reproducible, and the
 flags are harmless for D3D11 games, so they're always applied.
 
+**Load order matters.** `TriDefIgnition.dll` must finish initialising
+before `TriDefD3D9.dll` is loaded; the D3D9 DLL loaded first sits inert
+for good. An earlier version of the 32-bit helper fired both
+`LoadLibraryW` remote threads at once to save time, which made that order
+random — the same command then worked about one launch in three on
+Left 4 Dead, and nothing about Steam flags or profiles changed it. The
+bundled `Inject32.exe` is now a 4 KB native helper
+([native/inject32.cpp](native/inject32.cpp)) that loads the DLLs strictly
+in the order given, one at a time. The 64-bit in-process path always did
+that, which is why DirectX 11 never showed the problem.
+
 **One API set per process.** Do not inject the D3D9 and D3D11 sets
 together. `TriDefIgnition(64).dll` is shared state for both; loading both
 hook DLLs at once makes TriDef report "this game did not use Direct3D"
@@ -196,7 +207,12 @@ python play3d.py "Left 4 Dead" --dry-run   # show what it would do, don't launch
 ```
 pip install pyinstaller
 pyinstaller build/Tridef3D_Play.spec --distpath .
+powershell -ExecutionPolicy Bypass -File native/build_inject32.ps1   # Inject32.exe (needs MSVC x86 tools)
 ```
+
+`Inject32.exe` is header-free and CRT-free C++, so it only needs the
+MSVC x86 cross compiler plus `kernel32.lib`/`shell32.lib` import
+libraries; edit the two paths at the top of the build script.
 
 ## Legal note
 
