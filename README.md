@@ -171,10 +171,14 @@ Ignition was running) merely coincided with a lucky or unlucky roll.
 The bundled `Inject32.exe` is now a 4 KB native helper
 ([native/inject32.cpp](native/inject32.cpp)) that loads the DLLs strictly
 in the order given, one at a time. With that, Left 4 Dead (Source
-engine) and The Cave (different engine) render in stereo every launch,
-with or without the Steam flags, with or without Ignition open. The
-64-bit in-process path always loaded sequentially, which is why DirectX
-11 never showed the problem.
+engine), The Cave and Torchlight (both different engines) render in
+stereo every launch, with or without Ignition open. The 64-bit
+in-process path always loaded sequentially, which is why DirectX 11
+never showed the problem.
+
+Confirmed so far: Left 4 Dead, The Cave, Torchlight (DirectX 9, 32-bit)
+and Gone Home (DirectX 11, 64-bit). Left 4 Dead, The Cave and Gone Home
+were also each confirmed with the Steam flags removed.
 
 The `-no-browser -no-cef-sandbox` Steam flags the tool passes came from
 the "Getting TriDef working with Steam games" thread on the MTBS3D
