@@ -66,9 +66,10 @@ def get_standard_dlls(is_64bit):
     nothing more:
 
     - 32-bit: TriDefIgnition.dll + TriDefD3D9.dll (Left 4 Dead, DX9).
-      Launching Steam itself with -no-browser -no-cef-sandbox is what
-      makes TriDef's D3D9 activation actually take (see play3d()) -
-      without those flags the DLLs load but never hook.
+      ORDER MATTERS: Ignition first, then D3D9, loaded one at a time.
+      TriDefD3D9.dll initialised before its Ignition counterpart stays
+      inert - that (via a parallel-loading helper) was the real reason
+      DX9 looked flaky for so long, not the Steam flags in play3d().
     - 64-bit: TriDefIgnition64.dll + TriDefD3D1164.dll + TriDefDXGI64.dll
       (Gone Home, DX11).
 
@@ -340,11 +341,12 @@ def play3d(game_name, dry_run=False):
 
     # Launch Steam directly with these two flags ahead of the steam://
     # URI, instead of going through the shell's steam:// protocol handler
-    # (which can't pass flags through to steam.exe at all). Community-
-    # confirmed fix for TriDef's own D3D9 activation (TriDef3DSDKFunc)
-    # otherwise loading inert - these disable Steam's embedded CEF
-    # browser, avoiding some conflict with TriDef's hook. Kept for D3D11
-    # launches too since it's been confirmed harmless there.
+    # (which can't pass flags through to steam.exe at all). The flags
+    # disable Steam's embedded CEF browser; they came from a forum tip
+    # picked up while chasing the D3D9 problem. The actual D3D9 fix turned
+    # out to be DLL load order (see get_standard_dlls) and a controlled
+    # run without the flags works too - they're kept only because every
+    # verified run used them and they're harmless for both D3D9 and D3D11.
     launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
 
     if dry_run:

@@ -7,7 +7,7 @@ binaries.
 
 Supports **DirectX 9 (32-bit) and DirectX 11 (64-bit) games**, using TriDef's
 own real rendering DLLs for both. See [DirectX 9 support](#directx-9-support)
-for the one non-obvious trick that makes D3D9 work.
+for the one thing that has to be right for D3D9: DLL load order.
 
 ## What this actually solves: the Ignition pop-up
 
@@ -121,9 +121,12 @@ through this tool.
   through the `steam://` protocol is what makes Steamworks games
   initialize normally instead of detecting "not launched by Steam" and
   silently relaunching themselves. The two flags disable Steam's embedded
-  Chromium browser for that launch — required for DirectX 9, harmless for
-  DirectX 11 (see below). The shell's `steam://` URI handler can't pass
-  flags through to `steam.exe`, so it's invoked directly.
+  Chromium browser for that launch. They came from a forum tip picked up
+  while chasing the DirectX 9 problem; it later turned out D3D9 works
+  without them too (the real fix was DLL load order, see below). Every
+  verified run has used them and they do no harm, so they stay. The
+  shell's `steam://` URI handler can't pass flags through to `steam.exe`,
+  which is why it's invoked directly.
 - **Poll for the new process at native speed** (a tight loop over
   `CreateToolhelp32Snapshot`) and inject the instant it appears. No
   thread suspension is used: freezing a brand-new process's only thread
@@ -153,31 +156,32 @@ yourself for any of this to do anything.
 
 ## DirectX 9 support
 
-TriDef's D3D9 DLL, loaded with a plain `LoadLibraryW`, sits inert — it
-never hooks anything, and the game runs in plain 2D. That looked like a
-dead end for a long time (its activation path seemed to need internal
-state only TriDef's own injector stub sets up).
+For a long time TriDef's D3D9 DLL, injected with a plain `LoadLibraryW`,
+seemed to sit inert: it loaded fine but never hooked anything, and the
+game ran in plain 2D. That looked like an activation path only TriDef's
+own injector stub could set up.
 
-The fix comes from a community tip (the "Getting TriDef working with
-Steam games" thread on the MTBS3D forums): launch Steam with
-`-no-browser -no-cef-sandbox`. With those flags on the `steam.exe` call
-that starts the game, `TriDefIgnition.dll` + `TriDefD3D9.dll` hook
-correctly and D3D9 games render in stereo. Confirmed live against
-Left 4 Dead (Source engine) and The Cave (different engine) — the
-effect isn't engine-specific. Why Steam's embedded browser interferes with TriDef's D3D9
-activation isn't understood — but the effect is reproducible, and the
-flags are harmless for D3D11 games, so they're always applied.
-
-**Load order matters.** `TriDefIgnition.dll` must finish initialising
-before `TriDefD3D9.dll` is loaded; the D3D9 DLL loaded first sits inert
-for good. An earlier version of the 32-bit helper fired both
-`LoadLibraryW` remote threads at once to save time, which made that order
-random — the same command then worked about one launch in three on
-Left 4 Dead, and nothing about Steam flags or profiles changed it. The
-bundled `Inject32.exe` is now a 4 KB native helper
+**The actual cause was load order.** `TriDefIgnition.dll` must finish
+initialising before `TriDefD3D9.dll` is loaded; the D3D9 DLL loaded first
+stays inert for good. The 32-bit helper used to fire both `LoadLibraryW`
+remote threads at once to save time, which made that order random — so
+the same command worked about one launch in three on Left 4 Dead, and
+every "fix" tried in between (Steam flags, profile changes, whether
+Ignition was running) merely coincided with a lucky or unlucky roll.
+The bundled `Inject32.exe` is now a 4 KB native helper
 ([native/inject32.cpp](native/inject32.cpp)) that loads the DLLs strictly
-in the order given, one at a time. The 64-bit in-process path always did
-that, which is why DirectX 11 never showed the problem.
+in the order given, one at a time. With that, Left 4 Dead (Source
+engine) and The Cave (different engine) render in stereo every launch,
+with or without the Steam flags, with or without Ignition open. The
+64-bit in-process path always loaded sequentially, which is why DirectX
+11 never showed the problem.
+
+The `-no-browser -no-cef-sandbox` Steam flags the tool passes came from
+the "Getting TriDef working with Steam games" thread on the MTBS3D
+forums. They were adopted during that investigation and happened to be
+in place for the first success, but a controlled run without them works
+just as well. They're kept because every verified run used them and
+they're harmless.
 
 **One API set per process.** Do not inject the D3D9 and D3D11 sets
 together. `TriDefIgnition(64).dll` is shared state for both; loading both
