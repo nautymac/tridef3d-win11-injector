@@ -1,10 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Same as Tridef3D_Play.spec but built from play3d_noflags.py: launches via
-# the plain steam:// handler with no -no-browser -no-cef-sandbox flags.
+# Backup variant: same as Tridef3D_Play.spec but built from
+# play3d_steamflags.py, which launches steam.exe directly with
+# -no-browser -no-cef-sandbox instead of the plain steam:// handler.
 
 
 a = Analysis(
-    ['../play3d_noflags.py'],
+    ['../play3d_steamflags.py'],
     pathex=['..'],
     binaries=[],
     datas=[],
@@ -24,7 +25,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Tridef3D_Play_noflags',
+    name='Tridef3D_Play_steamflags',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

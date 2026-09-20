@@ -280,9 +280,9 @@ def play3d(game_name, dry_run=False, steam_flags=True):
     appid = get_tridef_game_appid(game_name)
     print(f"Steam AppID: {appid}")
     if steam_flags:
+        print("(steam-flags mode: launching steam.exe with -no-browser -no-cef-sandbox)")
         sync_ignition_argument_with_fix(game_name, appid)
     else:
-        print("(--no-steam-flags: plain steam:// launch, Ignition's Argument left untouched)")
         set_ignition_last_game(game_name)
 
     steam_path = get_steam_path()
@@ -352,10 +352,11 @@ def play3d(game_name, dry_run=False, steam_flags=True):
     # disable Steam's embedded CEF browser; they came from a forum tip
     # picked up while chasing the D3D9 problem. The actual D3D9 fix turned
     # out to be DLL load order (see get_standard_dlls) and a controlled
-    # run without the flags works too - they're kept only because every
-    # verified run used them and they're harmless for both D3D9 and D3D11.
-    # --no-steam-flags (or the Tridef3D_Play_noflags build) skips steam.exe
-    # entirely and just opens the steam:// URI through the shell handler.
+    # run without the flags works too. Default is therefore the plain
+    # steam:// URI through the shell handler; --steam-flags (or the
+    # Tridef3D_Play_steamflags build) is kept as a backup that launches
+    # steam.exe directly with the flags, exactly as every earlier verified
+    # run did.
     if steam_flags:
         launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
         launch_uri_for_shell = None
@@ -363,7 +364,7 @@ def play3d(game_name, dry_run=False, steam_flags=True):
     else:
         launch_cmd = None
         launch_uri_for_shell = launch_uri
-        print(f"Launch: start {launch_uri}  (no Steam flags)")
+        print(f"Launch: start {launch_uri}")
 
     if dry_run:
         print("(dry run - not actually launching)")
@@ -479,10 +480,15 @@ def prompt_for_game_name():
     return choice  # allow typing a name not in the list too
 
 
-def main(default_steam_flags=True):
+def main(default_steam_flags=False):
     dry_run = '--dry-run' in sys.argv
-    steam_flags = default_steam_flags and '--no-steam-flags' not in sys.argv
-    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--no-steam-flags')]
+    if '--steam-flags' in sys.argv:
+        steam_flags = True
+    elif '--no-steam-flags' in sys.argv:
+        steam_flags = False
+    else:
+        steam_flags = default_steam_flags
+    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--steam-flags', '--no-steam-flags')]
 
     if positional:
         game_name = positional[0]
