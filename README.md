@@ -179,9 +179,12 @@ with or without the Steam flags, with or without Ignition open. The
 The `-no-browser -no-cef-sandbox` Steam flags the tool passes came from
 the "Getting TriDef working with Steam games" thread on the MTBS3D
 forums. They were adopted during that investigation and happened to be
-in place for the first success, but a controlled run without them works
+in place for the first success, but controlled runs without them work
 just as well. They're kept because every verified run used them and
-they're harmless.
+they're harmless. To launch without them, pass `--no-steam-flags`, or
+build `Tridef3D_Play_noflags.exe` from `build/Tridef3D_Play_noflags.spec`
+— that variant opens the plain `steam://` URI through the shell handler
+and leaves Ignition's `Argument` value untouched.
 
 **One API set per process.** Do not inject the D3D9 and D3D11 sets
 together. `TriDefIgnition(64).dll` is shared state for both; loading both
