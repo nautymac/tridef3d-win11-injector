@@ -212,6 +212,9 @@ python play3d.py "Left 4 Dead"
 python play3d.py "Left 4 Dead" --dry-run   # show what it would do, don't launch
 ```
 
+For 32-bit games this still needs `Inject32.exe` next to `play3d.py` (grab
+it from a release, or build it as below).
+
 ## Building it yourself
 
 ```
