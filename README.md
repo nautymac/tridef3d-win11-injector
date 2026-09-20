@@ -118,7 +118,8 @@ Steam games" thread on the MTBS3D forums): launch Steam with
 `-no-browser -no-cef-sandbox`. With those flags on the `steam.exe` call
 that starts the game, `TriDefIgnition.dll` + `TriDefD3D9.dll` hook
 correctly and D3D9 games render in stereo. Confirmed live against
-Left 4 Dead. Why Steam's embedded browser interferes with TriDef's D3D9
+Left 4 Dead (Source engine) and The Cave (different engine) — the
+effect isn't engine-specific. Why Steam's embedded browser interferes with TriDef's D3D9
 activation isn't understood — but the effect is reproducible, and the
 flags are harmless for D3D11 games, so they're always applied.
 
