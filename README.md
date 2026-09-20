@@ -71,6 +71,13 @@ produces real depth:
 So if a game injects fine yet looks flat, the injection isn't the problem —
 that title has no TriDef profile.
 
+How the injected DLL finds the profile: `TriDefIgnition.dll` reads
+Ignition's `LastGameName` registry value and looks up that game's
+`Profile` path — it has no other way of knowing which game it landed in.
+Ignition's UI writes `LastGameName` whenever you click a game there. This
+tool writes it for the game you're launching, so you get that game's
+profile and not whichever one was last selected in Ignition.
+
 ## Why this exists
 
 TriDef 3D shipped with ~800 hand-tuned per-game profiles, but the bundled

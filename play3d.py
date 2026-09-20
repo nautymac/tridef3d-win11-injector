@@ -222,6 +222,19 @@ def sync_ignition_argument_with_fix(game_name, appid):
     except OSError as e:
         print(f"(couldn't sync Ignition's Argument for {game_name!r}: {e})")
 
+    # TriDefIgnition.dll, once inside the game, finds its per-game profile
+    # by reading Games\<LastGameName>\Profile - it has no other way of
+    # knowing which game it was injected into. Ignition's UI writes
+    # LastGameName whenever a game is selected there; we're launching
+    # without the UI, so write it ourselves or the game gets whichever
+    # profile was last clicked in Ignition.
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\DDD\TriDefIgnition\Games",
+                            0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, "LastGameName", 0, winreg.REG_SZ, game_name)
+    except OSError as e:
+        print(f"(couldn't set LastGameName to {game_name!r}: {e})")
+
 
 def find_library_folder_for_app(steam_path, appid):
     vdf_path = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
