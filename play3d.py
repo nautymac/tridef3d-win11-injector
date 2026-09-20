@@ -61,28 +61,14 @@ def get_tridef_driver_dir():
 
 
 def get_standard_dlls(is_64bit):
-    """Only ever loads TriDef's own real DLLs - by design, this project
-    injects actual TriDef 3D rendering, not a substitute.
-
-    For 32-bit games this includes TriDef's own D3D9 set
-    (TriDefD3D9.dll), injected the same plain LoadLibraryW way as
-    everything else, even though earlier testing in this project found
-    that its activation entry point (TriDef3DSDKFunc) needs an explicit
-    call that only TriDef's own injector stub provides - a plain
-    LoadLibraryW load was "stable but never hooks" for the specific games
-    tested (see hook_dll/bridge_d3d9.cpp for that investigation). Left in
-    anyway since that was only confirmed for a couple of games; it's
-    possible other DX9 titles hook successfully through a different path.
-    hook_dll/hook_d3d9.cpp is a working from-scratch, non-TriDef
-    replacement that also exists in this repo, but is intentionally not
-    used here - only TriDef's own rendering is injected.
-
-    D3D9 and D3D11 are both included for 32-bit since there's no reliable
-    way to know in advance which one a given game actually uses (see the
-    git history for why - PE import table analysis doesn't work for
-    Unity/Source, which resolve their real Direct3D backend dynamically
-    at runtime). Each only activates if the game actually calls the
-    matching Direct3D API, so including both is harmless either way."""
+    """DirectX 11 only, for both 32-bit and 64-bit games - loads TriDef's
+    own real D3D11/DXGI rendering DLLs. DirectX 9 support was dropped:
+    TriDef's own D3D9 activation entry point (TriDef3DSDKFunc) needs an
+    explicit call that only TriDef's own injector stub provides, so a
+    plain LoadLibraryW load never actually hooks anything for a DX9 game
+    - confirmed dead end (see git history for the investigation), not
+    worth the added complexity of also injecting a DX9 DLL set that does
+    nothing."""
     driver_dir = get_tridef_driver_dir()
     if is_64bit:
         return [
@@ -92,7 +78,6 @@ def get_standard_dlls(is_64bit):
         ]
     return [
         os.path.join(driver_dir, "TriDefIgnition.dll"),
-        os.path.join(driver_dir, "TriDefD3D9.dll"),
         os.path.join(driver_dir, "TriDefD3D11.dll"),
         os.path.join(driver_dir, "TriDefDXGI.dll"),
     ]

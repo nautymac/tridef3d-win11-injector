@@ -1,9 +1,37 @@
-# TriDef 3D Injector (Windows 11 fix)
+# TriDef 3D Injector (Windows 11 fix, DirectX 11)
 
 A replacement launcher/injector for **TriDef 3D Ignition** — the stereoscopic-3D
 driver by DDD (defunct since ~2017) — that works reliably on modern Windows 11
 and modern games, without touching or redistributing any of TriDef's own
 binaries.
+
+Supports **DirectX 11 games, 32-bit and 64-bit**. DirectX 9 was investigated
+and dropped — see [Why no DirectX 9?](#why-no-directx-9) below.
+
+## Quick start
+
+1. Install [TriDef 3D](https://en.wikipedia.org/wiki/TriDef_3D) (your own
+   existing install/license — this project doesn't provide one).
+2. Add the game once in TriDef 3D Ignition's own UI (you never need to
+   actually launch it from there).
+3. Run `Tridef3D_Dx11_Play.exe` (as Administrator) — from
+   [Releases](../../releases), no Python required.
+
+```
+Tridef3D_Dx11_Play.exe
+```
+
+With no arguments it lists every Steam game you've registered in TriDef 3D
+Ignition — pick a number, or press Enter to relaunch whatever you ran last
+time. Or name the game directly:
+
+```
+Tridef3D_Dx11_Play.exe "Gone Home"
+```
+
+`Tridef3D_Dx11_Play.bat` is a double-click-friendly wrapper. Works
+identically for 32-bit or 64-bit games — the right DLL set is picked
+automatically.
 
 ## Why this exists
 
@@ -17,17 +45,23 @@ reasons:
    it just signals the existing Steam client, which then spawns the real
    game as *its own* child. Ignition never sees that child; it hands the
    injector the PID of the throwaway `steam.exe` launch instead, so the
-   3D hook ends up injected into Steam itself, not the game.
+   3D hook ends up injected into Steam itself, not the game. (Confirmed
+   directly: logging the actual argument Ignition passes shows exactly
+   one PID, and it's steam.exe's, not the game's.)
 2. **Naive memory search.** The injector allocates memory for its payload
    by linearly scanning *upward only* from the target module's base
    address. Games in 2016 (when this was last updated) loaded a few dozen
    DLLs; a modern game can load 100+, often filling the address space all
    the way to the top — so the search comes up empty and injection fails
-   silently (exit code 4).
+   silently (exit code 4). A follow-up attempt to just binary-patch this
+   search logic hit a deeper wall: the offset math is 32-bit-truncated, so
+   the allocated memory has to land *near* the target module regardless of
+   how the search itself is tuned — not fixable without emitting different
+   machine code entirely.
 
-Reverse-engineering both of these (see the commit history / write-up) led
-to a small, from-scratch injector that sidesteps both problems entirely
-instead of patching the 2016-era binary.
+Reverse-engineering both of these led to a small, from-scratch injector
+that sidesteps both problems entirely instead of patching the 2016-era
+binary.
 
 ## How it works
 
@@ -44,33 +78,40 @@ instead of patching the 2016-era binary.
   holds its own loader lock*, which would deadlock the injection thread
   forever. Plain speed avoids that trap entirely.
 - **Standard `LoadLibraryW` + `CreateRemoteThread` injection** — the same
-  well-understood technique used by tools like ReShade and 3DMigoto.
-  - **64-bit games**: loads TriDef's own real `TriDefIgnition64.dll`,
-    `TriDefD3D1164.dll` and `TriDefDXGI64.dll` from wherever the user's
-    existing TriDef 3D install already has them. (64-bit DirectX 9 isn't
-    supported yet — see [`hook_dll/`](#hook_dll--a-from-scratch-d3d9-stereo-hook).)
-  - **32-bit games**: injects *both* `hook_dll/tridef_d3d9_hook.dll` (a
-    from-scratch DirectX 9 stereo hook — TriDef's own D3D9 activation
-    entry point turned out to be fundamentally uncallable from outside
-    code, see `hook_dll/bridge_d3d9.cpp`) **and** TriDef's own real 32-bit
-    D3D11 set (`TriDefIgnition.dll`, `TriDefD3D11.dll`, `TriDefDXGI.dll`)
-    at once, rather than trying to guess which DirectX version a game
-    uses ahead of time. That guess turns out to be unreliable for exactly
-    the engines it matters most for — Unity and Source both resolve their
-    real Direct3D backend dynamically at runtime instead of statically
-    importing it, so nothing about the .exe on disk reveals which one
-    it'll use. Each hook only ever activates if the game actually calls
-    the matching Direct3D API, so injecting both is harmless: whichever
-    one the game doesn't use just sits there loaded and inert.
-
-  Either way, the launcher handles it automatically — running a 32-bit or
-  64-bit game looks identical from the command line.
+  well-understood technique used by tools like ReShade and 3DMigoto —
+  loading TriDef's own real D3D11/DXGI DLLs from wherever the user's
+  existing TriDef 3D install already has them (`TriDefIgnition64.dll` +
+  `TriDefD3D1164.dll` + `TriDefDXGI64.dll` for 64-bit games,
+  `TriDefIgnition.dll` + `TriDefD3D11.dll` + `TriDefDXGI.dll` for 32-bit).
+  For 32-bit targets, a 64-bit process can't correctly resolve
+  `LoadLibraryW`'s address inside a 32-bit (WOW64) target, so the actual
+  injection step is delegated to the bundled `Inject32.exe` helper, which
+  matches the target's bitness.
 
 This repo contains **no TriDef binaries** and never copies or bundles
 them — it only calls `LoadLibraryW` on paths already present from the
 user's own licensed install (read from the registry TriDef itself
 writes at `HKLM\SOFTWARE\WOW6432Node\DDD`). You need TriDef 3D installed
 yourself for any of this to do anything.
+
+## Why no DirectX 9?
+
+DirectX 9 support was built and worked as a from-scratch, non-TriDef
+depth-based stereo hook, but was dropped from this project: it doesn't use
+TriDef's actual rendering, just a substitute for it, which wasn't the
+point of reviving TriDef here.
+
+Getting *TriDef's own* D3D9 rendering to activate turned out to be a dead
+end. Its activation entry point (`TriDef3DSDKFunc`, in `TriDefD3D9.dll`)
+needs an explicit call with an undocumented register value that only
+TriDef's own injector stub sets up — a plain `LoadLibraryW` load leaves
+the DLL loaded but inert, and calling the entry point directly from
+outside code crashes identically regardless of calling convention.
+Confirmed this isn't fixable by improving the launch mechanism either:
+even TriDef 3D Ignition's own "Play" button, using its own real
+`TriDefInjector.exe`/`TriDefInjector64.exe`, fails to activate D3D9 the
+same way — the problem is upstream in TriDef's own D3D9 activation path,
+not in how any injector (including TriDef's own) calls it.
 
 ## Requirements
 
@@ -83,38 +124,9 @@ yourself for any of this to do anything.
 - Steam, with the game installed
 - Administrator privileges (required for cross-process injection)
 - Python 3.9+ if running from source; no Python needed if using the
-  prebuilt `Play3D.exe` from [Releases](../../releases)
+  prebuilt `Tridef3D_Dx11_Play.exe` from [Releases](../../releases)
 
-## Usage
-
-```
-Play3D.exe
-```
-
-Run it (as Administrator) with no arguments and it launches whatever
-game you most recently added or selected in TriDef 3D Ignition's own UI
-— so the flow is just "register the game in Ignition, then run
-`Play3D.exe`/`Play3D.bat`", no need to pick it again. If Ignition hasn't
-recorded a game yet, it instead lists every Steam game you've registered
-there — pick a number, or press Enter to relaunch whatever you ran last
-time through this tool.
-
-```
-Play3D.exe "Gone Home"
-```
-
-Or name the game directly. `Play3D.bat` is a double-click-friendly
-wrapper that keeps the console window open afterward. Works identically
-whether the game turns out to be 32-bit or 64-bit, or DirectX 9 or 11 —
-the DLLs to inject are picked automatically once the game's architecture
-is detected.
-
-If the from-scratch D3D9 hook ends up active (32-bit game, actually using
-DirectX 9), once running: `Ctrl+F3`/`Ctrl+F4` adjust separation,
-`Ctrl+F5`/`Ctrl+F6` adjust convergence (same keys as TriDef's own
-Ignition driver) — see [`hook_dll/`](#hook_dll--a-from-scratch-d3d9-stereo-hook) below.
-
-Running from source instead of the prebuilt exe:
+## Running from source
 
 ```
 python play3d.py "Gone Home"
@@ -125,76 +137,8 @@ python play3d.py "Gone Home" --dry-run   # show what it would do, don't launch
 
 ```
 pip install pyinstaller
-pyinstaller build/Play3D.spec --distpath .
+pyinstaller build/Tridef3D_Dx11_Play.spec --distpath .
 ```
-
-`hook_dll/tridef_d3d9_hook.dll` (injected into every 32-bit game — see
-below) is a separate native build — requires the MSVC x86 toolchain and
-Windows SDK:
-
-```
-powershell -ExecutionPolicy Bypass -File hook_dll/build_d3d9_32.ps1
-```
-
-## `hook_dll/` — a from-scratch D3D9 stereo hook
-
-`hook_dll/hook_d3d9.cpp` is injected into every 32-bit game alongside
-TriDef's own D3D11 DLLs (see "How it works" above for why it's not
-possible to know in advance which one a given game will actually use) —
-if the game turns out to be DirectX 9, this is what actually renders the
-stereo effect. TriDef's own D3D9 activation path (`TriDef3DSDKFunc`)
-depends on an undocumented register value its internal dispatch sets up,
-which no standard external call can replicate, so this replaces that
-dependency entirely with an independent implementation:
-
-- **Real depth, not estimated.** Hooks `IDirect3D9::CreateDevice` (shared
-  vtable trick) to reach the real device, then swaps in its own
-  `D3DFMT_INTZ`-format depth texture via `SetDepthStencilSurface` — the
-  same depth-buffer-as-texture trick ReShade and countless D3D9 mods have
-  used for over a decade — so the stereo shift is computed from the
-  game's actual per-pixel depth.
-- **Composites in `Present`, not `EndScene`.** Some engines call
-  `EndScene` more than once per displayed frame (an offscreen pass, or a
-  separate late pass some games use just to draw their own cursor
-  sprite); compositing there meant whatever ran after us — including a
-  game's own cursor — landed on the backbuffer un-split. `Present` fires
-  exactly once per displayed frame, after everything else, so that's
-  where the actual capture + Half-SBS composite happens now (wrapped in
-  its own `BeginScene`/`EndScene` pair).
-- **Handles `Reset()`.** Releases/rebinds its own D3DPOOL_DEFAULT
-  resources around the game's device `Reset()` calls (window size/mode
-  changes) — otherwise a still-bound custom depth surface makes `Reset()`
-  fail outright, silently breaking every subsequent D3D9 draw call
-  (menus, HUD, loading screens) while anything that bypasses the device
-  (like an intro video) keeps working, which looks exactly like "only
-  the video plays, no UI at all."
-- **Forces fixed-function state for its own draw.** A vertex shader left
-  bound from the game's last draw call silently overrides FVF for any
-  pretransformed quad — `DrawPrimitive` still reports success either
-  way, it just draws nothing visible. Explicitly clears the vertex
-  shader (and cull/scissor/stencil/alpha-test state) before drawing.
-- **Cursor handling.** The real mouse cursor is a single, unsplit overlay
-  that has no idea the frame is now Half-SBS. Every known way to hide it
-  turned out to be a no-op for at least one tested game — Win32
-  `ShowCursor`, the D3D9 device's own `ShowCursor`, even subclassing the
-  window to force `SetCursor(NULL)` on `WM_SETCURSOR` — so it falls back
-  to replacing the shared system cursor resource itself
-  (`SetSystemCursor` on `OCR_NORMAL`), which works regardless of which
-  API/thread/window the game uses, and is restored on clean exit. A
-  small marker is drawn into both halves at the mouse's real,
-  squished-and-shifted position so the cursor stays usable.
-- **Runtime tuning.** `Ctrl+F3`/`Ctrl+F4` step separation down/up,
-  `Ctrl+F5`/`Ctrl+F6` step convergence down/up — the same key scheme as
-  TriDef's own Ignition driver. Values persist across restarts in
-  `hook_dll/tridef_d3d9_hook_config.ini`.
-
-This repo also has a matching from-scratch DXGI/D3D11 `Present` hook
-(`hook_dll/hook.cpp`) that proves out the same vtable-hooking + depth
-capture approach for D3D11, as a profile-free alternative for games with
-no TriDef profile — it's an earlier, less complete proof of concept, not
-what actually runs for DirectX 11 games (that still uses TriDef's own,
-already-correct D3D11 rendering via its real DLLs, for both 32-bit and
-64-bit).
 
 ## Legal note
 
