@@ -41,8 +41,9 @@ Tridef3D_Play.exe
 ```
 
 With no arguments it lists every Steam game you've registered in TriDef 3D
-Ignition, with the one you most recently selected as the default — pick a
-number, or just press Enter. Or name the game directly:
+Ignition, with the one you most recently launched (or last clicked in
+Ignition) as the default — pick a number, or just press Enter. Or name the
+game directly:
 
 ```
 Tridef3D_Play.exe "Left 4 Dead"
