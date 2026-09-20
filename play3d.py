@@ -222,13 +222,16 @@ def sync_ignition_argument_with_fix(game_name, appid):
                 print(f"synced Ignition's own Argument for {game_name!r} -> {fixed_argument}")
     except OSError as e:
         print(f"(couldn't sync Ignition's Argument for {game_name!r}: {e})")
+    set_ignition_last_game(game_name)
 
-    # TriDefIgnition.dll, once inside the game, finds its per-game profile
-    # by reading Games\<LastGameName>\Profile - it has no other way of
-    # knowing which game it was injected into. Ignition's UI writes
-    # LastGameName whenever a game is selected there; we're launching
-    # without the UI, so write it ourselves or the game gets whichever
-    # profile was last clicked in Ignition.
+
+def set_ignition_last_game(game_name):
+    """TriDefIgnition.dll, once inside the game, finds its per-game profile
+    by reading Games\\<LastGameName>\\Profile - it has no other way of
+    knowing which game it was injected into. Ignition's UI writes
+    LastGameName whenever a game is selected there; we're launching
+    without the UI, so write it ourselves or the game gets whichever
+    profile was last clicked in Ignition."""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\DDD\TriDefIgnition\Games",
                             0, winreg.KEY_SET_VALUE) as k:
@@ -271,12 +274,16 @@ def guess_main_exe(install_dir):
     return candidates[0]
 
 
-def play3d(game_name, dry_run=False):
+def play3d(game_name, dry_run=False, steam_flags=True):
     print(f"=== TriDef 3D launch: {game_name} ===")
 
     appid = get_tridef_game_appid(game_name)
     print(f"Steam AppID: {appid}")
-    sync_ignition_argument_with_fix(game_name, appid)
+    if steam_flags:
+        sync_ignition_argument_with_fix(game_name, appid)
+    else:
+        print("(--no-steam-flags: plain steam:// launch, Ignition's Argument left untouched)")
+        set_ignition_last_game(game_name)
 
     steam_path = get_steam_path()
     if not steam_path:
@@ -347,13 +354,22 @@ def play3d(game_name, dry_run=False):
     # out to be DLL load order (see get_standard_dlls) and a controlled
     # run without the flags works too - they're kept only because every
     # verified run used them and they're harmless for both D3D9 and D3D11.
-    launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
+    # --no-steam-flags (or the Tridef3D_Play_noflags build) skips steam.exe
+    # entirely and just opens the steam:// URI through the shell handler.
+    if steam_flags:
+        launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
+        launch_uri_for_shell = None
+        print(f"Launch: {' '.join(launch_cmd)}")
+    else:
+        launch_cmd = None
+        launch_uri_for_shell = launch_uri
+        print(f"Launch: start {launch_uri}  (no Steam flags)")
 
     if dry_run:
         print("(dry run - not actually launching)")
         return True
 
-    pid = injector.poll_launch_and_inject(image_name, None, standard_dlls,
+    pid = injector.poll_launch_and_inject(image_name, launch_uri_for_shell, standard_dlls,
                                            injector_python=injector_python,
                                            launch_cmd=launch_cmd)
     if pid:
@@ -463,9 +479,10 @@ def prompt_for_game_name():
     return choice  # allow typing a name not in the list too
 
 
-if __name__ == '__main__':
+def main(default_steam_flags=True):
     dry_run = '--dry-run' in sys.argv
-    positional = [a for a in sys.argv[1:] if a != '--dry-run']
+    steam_flags = default_steam_flags and '--no-steam-flags' not in sys.argv
+    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--no-steam-flags')]
 
     if positional:
         game_name = positional[0]
@@ -476,7 +493,11 @@ if __name__ == '__main__':
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
         sys.exit(1)
 
-    ok = play3d(game_name, dry_run=dry_run)
+    ok = play3d(game_name, dry_run=dry_run, steam_flags=steam_flags)
     if ok and not dry_run:
         save_last_used(game_name)
     sys.exit(0 if ok else 1)
+
+
+if __name__ == '__main__':
+    main()
