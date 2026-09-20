@@ -1,37 +1,40 @@
-# TriDef 3D Injector (Windows 11 fix, DirectX 11)
+# TriDef 3D Injector (Windows 11 fix)
 
 A replacement launcher/injector for **TriDef 3D Ignition** — the stereoscopic-3D
 driver by DDD (defunct since ~2017) — that works reliably on modern Windows 11
 and modern games, without touching or redistributing any of TriDef's own
 binaries.
 
-Supports **DirectX 11 games, 32-bit and 64-bit**. DirectX 9 was investigated
-and dropped — see [Why no DirectX 9?](#why-no-directx-9) below.
+Supports **DirectX 9 (32-bit) and DirectX 11 (64-bit) games**, using TriDef's
+own real rendering DLLs for both. See [DirectX 9 support](#directx-9-support)
+for the one non-obvious trick that makes D3D9 work.
 
 ## Quick start
 
 1. Install [TriDef 3D](https://en.wikipedia.org/wiki/TriDef_3D) (your own
    existing install/license — this project doesn't provide one).
 2. Add the game once in TriDef 3D Ignition's own UI (you never need to
-   actually launch it from there).
-3. Run `Tridef3D_Dx11_Play.exe` (as Administrator) — from
+   actually launch it from there — in fact, don't; see
+   [Why this exists](#why-this-exists)).
+3. Run `Tridef3D_Play.exe` (as Administrator) — from
    [Releases](../../releases), no Python required.
 
 ```
-Tridef3D_Dx11_Play.exe
+Tridef3D_Play.exe
 ```
 
 With no arguments it lists every Steam game you've registered in TriDef 3D
-Ignition — pick a number, or press Enter to relaunch whatever you ran last
-time. Or name the game directly:
+Ignition, with the one you most recently selected as the default — pick a
+number, or just press Enter. Or name the game directly:
 
 ```
-Tridef3D_Dx11_Play.exe "Gone Home"
+Tridef3D_Play.exe "Left 4 Dead"
 ```
 
-`Tridef3D_Dx11_Play.bat` is a double-click-friendly wrapper. Works
-identically for 32-bit or 64-bit games — the right DLL set is picked
-automatically.
+`Tridef3D_Play.bat` is a double-click-friendly wrapper. Works identically
+for 32-bit or 64-bit games — the right DLL set is picked automatically.
+`Inject32.exe` must sit in the same folder for 32-bit games (see
+[How it works](#how-it-works)).
 
 ## Why this exists
 
@@ -45,9 +48,11 @@ reasons:
    it just signals the existing Steam client, which then spawns the real
    game as *its own* child. Ignition never sees that child; it hands the
    injector the PID of the throwaway `steam.exe` launch instead, so the
-   3D hook ends up injected into Steam itself, not the game. (Confirmed
+   3D hook ends up watching Steam itself, not the game. (Confirmed
    directly: logging the actual argument Ignition passes shows exactly
-   one PID, and it's steam.exe's, not the game's.)
+   one PID, and it's steam.exe's. The visible symptom is Ignition's
+   "this game did not use Direct3D 9, 10 or 11" warning — it watched the
+   wrong process, which indeed never used Direct3D.)
 2. **Naive memory search.** The injector allocates memory for its payload
    by linearly scanning *upward only* from the target module's base
    address. Games in 2016 (when this was last updated) loaded a few dozen
@@ -61,32 +66,39 @@ reasons:
 
 Reverse-engineering both of these led to a small, from-scratch injector
 that sidesteps both problems entirely instead of patching the 2016-era
-binary.
+binary. Ignition's own "Play" button remains broken — always launch
+through this tool.
 
 ## How it works
 
-- **Launch via the real `steam://` protocol**, never the game's `.exe`
-  directly. This is what makes Steamworks games initialize normally
-  instead of detecting "not launched by Steam" and silently killing +
-  relaunching themselves through the persistent Steam client (which
-  would again land outside any process tree we could otherwise watch).
+- **Launch `steam.exe` directly, with two extra flags:**
+  `steam.exe -no-browser -no-cef-sandbox steam://rungameid/<id>`. Going
+  through the `steam://` protocol is what makes Steamworks games
+  initialize normally instead of detecting "not launched by Steam" and
+  silently relaunching themselves. The two flags disable Steam's embedded
+  Chromium browser for that launch — required for DirectX 9, harmless for
+  DirectX 11 (see below). The shell's `steam://` URI handler can't pass
+  flags through to `steam.exe`, so it's invoked directly.
 - **Poll for the new process at native speed** (a tight loop over
-  `CreateToolhelp32Snapshot`, no `Sleep` throttling worth mentioning) and
-  inject the instant it appears — racing to get there before the game
-  creates its Direct3D device. No thread suspension is used: freezing a
-  brand-new process's only thread is very likely to freeze it *while it
-  holds its own loader lock*, which would deadlock the injection thread
-  forever. Plain speed avoids that trap entirely.
+  `CreateToolhelp32Snapshot`) and inject the instant it appears. No
+  thread suspension is used: freezing a brand-new process's only thread
+  is very likely to freeze it *while it holds its own loader lock*, which
+  would deadlock the injection thread forever. Plain speed avoids that.
 - **Standard `LoadLibraryW` + `CreateRemoteThread` injection** — the same
   well-understood technique used by tools like ReShade and 3DMigoto —
-  loading TriDef's own real D3D11/DXGI DLLs from wherever the user's
-  existing TriDef 3D install already has them (`TriDefIgnition64.dll` +
-  `TriDefD3D1164.dll` + `TriDefDXGI64.dll` for 64-bit games,
-  `TriDefIgnition.dll` + `TriDefD3D11.dll` + `TriDefDXGI.dll` for 32-bit).
+  loading TriDef's own real DLLs from wherever the user's existing TriDef
+  3D install already has them:
+  - **64-bit games:** `TriDefIgnition64.dll` + `TriDefD3D1164.dll` +
+    `TriDefDXGI64.dll` (DirectX 11)
+  - **32-bit games:** `TriDefIgnition.dll` + `TriDefD3D9.dll` (DirectX 9)
+
   For 32-bit targets, a 64-bit process can't correctly resolve
   `LoadLibraryW`'s address inside a 32-bit (WOW64) target, so the actual
-  injection step is delegated to the bundled `Inject32.exe` helper, which
-  matches the target's bitness.
+  injection step is delegated to the bundled `Inject32.exe` helper.
+- The tool also writes the same two flags back into Ignition's own
+  per-game `Argument` registry value, so the setting is visible in
+  Ignition's game Properties dialog and survives if you ever do use
+  Ignition directly.
 
 This repo contains **no TriDef binaries** and never copies or bundles
 them — it only calls `LoadLibraryW` on paths already present from the
@@ -94,24 +106,34 @@ user's own licensed install (read from the registry TriDef itself
 writes at `HKLM\SOFTWARE\WOW6432Node\DDD`). You need TriDef 3D installed
 yourself for any of this to do anything.
 
-## Why no DirectX 9?
+## DirectX 9 support
 
-DirectX 9 support was built and worked as a from-scratch, non-TriDef
-depth-based stereo hook, but was dropped from this project: it doesn't use
-TriDef's actual rendering, just a substitute for it, which wasn't the
-point of reviving TriDef here.
+TriDef's D3D9 DLL, loaded with a plain `LoadLibraryW`, sits inert — it
+never hooks anything, and the game runs in plain 2D. That looked like a
+dead end for a long time (its activation path seemed to need internal
+state only TriDef's own injector stub sets up).
 
-Getting *TriDef's own* D3D9 rendering to activate turned out to be a dead
-end. Its activation entry point (`TriDef3DSDKFunc`, in `TriDefD3D9.dll`)
-needs an explicit call with an undocumented register value that only
-TriDef's own injector stub sets up — a plain `LoadLibraryW` load leaves
-the DLL loaded but inert, and calling the entry point directly from
-outside code crashes identically regardless of calling convention.
-Confirmed this isn't fixable by improving the launch mechanism either:
-even TriDef 3D Ignition's own "Play" button, using its own real
-`TriDefInjector.exe`/`TriDefInjector64.exe`, fails to activate D3D9 the
-same way — the problem is upstream in TriDef's own D3D9 activation path,
-not in how any injector (including TriDef's own) calls it.
+The fix comes from a community tip (the "Getting TriDef working with
+Steam games" thread on the MTBS3D forums): launch Steam with
+`-no-browser -no-cef-sandbox`. With those flags on the `steam.exe` call
+that starts the game, `TriDefIgnition.dll` + `TriDefD3D9.dll` hook
+correctly and D3D9 games render in stereo. Confirmed live against
+Left 4 Dead. Why Steam's embedded browser interferes with TriDef's D3D9
+activation isn't understood — but the effect is reproducible, and the
+flags are harmless for D3D11 games, so they're always applied.
+
+**One API set per process.** Do not inject the D3D9 and D3D11 sets
+together. `TriDefIgnition(64).dll` is shared state for both; loading both
+hook DLLs at once makes TriDef report "this game did not use Direct3D"
+and render nothing — reproduced on Gone Home. That's why the DLL set is
+chosen by bitness rather than injecting everything and letting the game
+pick.
+
+**Current limitation:** the set is picked by exe bitness — 32-bit gets
+the D3D9 set, 64-bit gets D3D11. A 32-bit DirectX 11 game isn't covered
+yet (no such title was available to test against). Static detection of
+which API a game uses doesn't work: Unity and Source both load their
+Direct3D backend dynamically at runtime rather than importing it.
 
 ## Requirements
 
@@ -124,20 +146,20 @@ not in how any injector (including TriDef's own) calls it.
 - Steam, with the game installed
 - Administrator privileges (required for cross-process injection)
 - Python 3.9+ if running from source; no Python needed if using the
-  prebuilt `Tridef3D_Dx11_Play.exe` from [Releases](../../releases)
+  prebuilt `Tridef3D_Play.exe` from [Releases](../../releases)
 
 ## Running from source
 
 ```
-python play3d.py "Gone Home"
-python play3d.py "Gone Home" --dry-run   # show what it would do, don't launch
+python play3d.py "Left 4 Dead"
+python play3d.py "Left 4 Dead" --dry-run   # show what it would do, don't launch
 ```
 
 ## Building it yourself
 
 ```
 pip install pyinstaller
-pyinstaller build/Tridef3D_Dx11_Play.spec --distpath .
+pyinstaller build/Tridef3D_Play.spec --distpath .
 ```
 
 ## Legal note

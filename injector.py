@@ -561,11 +561,15 @@ def inject_via_external_python(helper_exe, pid, dll_paths):
 
 
 def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=20, poll_s=0.001,
-                            suspend_first=False, injector_python=None):
+                            suspend_first=False, injector_python=None, launch_cmd=None):
     """Poll for a NEW process named image_name appearing and inject into it
     as fast as possible, racing to beat its own D3D device/resource
     creation. If launch_uri_or_none is given, it is triggered via
-    'cmd /c start' right after we start polling.
+    'cmd /c start' right after we start polling. If launch_cmd is given
+    instead (a full argv list), it's run directly via subprocess.Popen -
+    used to launch steam.exe itself with extra flags (see play3d.py) rather
+    than going through the shell's steam:// URI handler, which can't pass
+    flags through to steam.exe.
 
     suspend_first=True freezes every thread before injecting, which sounds
     safer but usually deadlocks: LoadLibraryW needs the process's loader
@@ -578,7 +582,10 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
     baseline = get_pids_by_name(image_name)
     print(f"baseline {image_name} pids (ignored): {baseline}")
 
-    if launch_uri_or_none:
+    if launch_cmd:
+        subprocess.Popen(launch_cmd, shell=False)
+        print(f"triggered launch: {launch_cmd}")
+    elif launch_uri_or_none:
         subprocess.Popen(["cmd", "/c", "start", "", launch_uri_or_none], shell=False)
         print(f"triggered launch: {launch_uri_or_none}")
 

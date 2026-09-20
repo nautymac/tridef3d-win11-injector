@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Tridef3D_Dx11_Play',
+    name='Tridef3D_Play',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

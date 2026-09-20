@@ -61,14 +61,20 @@ def get_tridef_driver_dir():
 
 
 def get_standard_dlls(is_64bit):
-    """DirectX 11 only, for both 32-bit and 64-bit games - loads TriDef's
-    own real D3D11/DXGI rendering DLLs. DirectX 9 support was dropped:
-    TriDef's own D3D9 activation entry point (TriDef3DSDKFunc) needs an
-    explicit call that only TriDef's own injector stub provides, so a
-    plain LoadLibraryW load never actually hooks anything for a DX9 game
-    - confirmed dead end (see git history for the investigation), not
-    worth the added complexity of also injecting a DX9 DLL set that does
-    nothing."""
+    """Exactly the two DLL sets that were confirmed working live, and
+    nothing more:
+
+    - 32-bit: TriDefIgnition.dll + TriDefD3D9.dll (Left 4 Dead, DX9).
+      Launching Steam itself with -no-browser -no-cef-sandbox is what
+      makes TriDef's D3D9 activation actually take (see play3d()) -
+      without those flags the DLLs load but never hook.
+    - 64-bit: TriDefIgnition64.dll + TriDefD3D1164.dll + TriDefDXGI64.dll
+      (Gone Home, DX11).
+
+    Do NOT inject the D3D9 and D3D11 sets together: TriDefIgnition(64).dll
+    is shared state for both, and loading both hook DLLs at once made
+    TriDef throw its "this game didn't use Direct3D" warning and render
+    nothing - reproduced on Gone Home. One API set per process."""
     driver_dir = get_tridef_driver_dir()
     if is_64bit:
         return [
@@ -78,8 +84,7 @@ def get_standard_dlls(is_64bit):
         ]
     return [
         os.path.join(driver_dir, "TriDefIgnition.dll"),
-        os.path.join(driver_dir, "TriDefD3D11.dll"),
-        os.path.join(driver_dir, "TriDefDXGI.dll"),
+        os.path.join(driver_dir, "TriDefD3D9.dll"),
     ]
 
 
@@ -195,6 +200,28 @@ def get_tridef_game_appid(game_name):
     return appid
 
 
+def sync_ignition_argument_with_fix(game_name, appid):
+    """Writes -no-browser -no-cef-sandbox steam://rungameid/<appid> back
+    into Ignition's own Argument value for this game, so TriDef 3D
+    Ignition's own "Play" button also launches with the fix applied - not
+    just runs launched through this tool. Best-effort: this is a nice-to-
+    have, not something play3d() should fail over if the registry key is
+    missing/unwritable for some reason."""
+    fixed_argument = f"-no-browser -no-cef-sandbox steam://rungameid/{appid}"
+    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
+            try:
+                current = winreg.QueryValueEx(k, "Argument")[0]
+            except FileNotFoundError:
+                current = None
+            if current != fixed_argument:
+                winreg.SetValueEx(k, "Argument", 0, winreg.REG_SZ, fixed_argument)
+                print(f"synced Ignition's own Argument for {game_name!r} -> {fixed_argument}")
+    except OSError as e:
+        print(f"(couldn't sync Ignition's Argument for {game_name!r}: {e})")
+
+
 def find_library_folder_for_app(steam_path, appid):
     vdf_path = os.path.join(steam_path, "steamapps", "libraryfolders.vdf")
     with open(vdf_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -234,6 +261,7 @@ def play3d(game_name, dry_run=False):
 
     appid = get_tridef_game_appid(game_name)
     print(f"Steam AppID: {appid}")
+    sync_ignition_argument_with_fix(game_name, appid)
 
     steam_path = get_steam_path()
     if not steam_path:
@@ -288,12 +316,22 @@ def play3d(game_name, dry_run=False):
         injector_python = helper
         print(f"32-bit target -> delegating injection to: {helper}")
 
+    # Launch Steam directly with these two flags ahead of the steam://
+    # URI, instead of going through the shell's steam:// protocol handler
+    # (which can't pass flags through to steam.exe at all). Community-
+    # confirmed fix for TriDef's own D3D9 activation (TriDef3DSDKFunc)
+    # otherwise loading inert - these disable Steam's embedded CEF
+    # browser, avoiding some conflict with TriDef's hook. Kept for D3D11
+    # launches too since it's been confirmed harmless there.
+    launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
+
     if dry_run:
         print("(dry run - not actually launching)")
         return True
 
-    pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls,
-                                           injector_python=injector_python)
+    pid = injector.poll_launch_and_inject(image_name, None, standard_dlls,
+                                           injector_python=injector_python,
+                                           launch_cmd=launch_cmd)
     if pid:
         print(f"\nSUCCESS: {game_name} running as PID {pid} with TriDef 3D injected.")
         return True
@@ -377,14 +415,20 @@ def prompt_for_game_name():
     if not games:
         return input('TriDef 3D Ignition에 등록된 게임이 없습니다. 게임 이름을 직접 입력하세요: ').strip()
 
-    last_used = load_last_used()
-    if last_used and last_used in games:
-        games.remove(last_used)
-        games.insert(0, last_used)
+    # Prefer Ignition's own "last selected" value as the suggested
+    # default, falling back to whatever this tool itself last launched.
+    # Only a *suggestion*, never auto-launched without confirmation - just
+    # opening a game's Properties dialog in Ignition updates its
+    # LastGameName as a side effect, so trusting it blindly used to
+    # launch the wrong game after nothing more than glancing at settings.
+    default_name = get_ignition_last_game_name() or load_last_used()
+    if default_name and default_name in games:
+        games.remove(default_name)
+        games.insert(0, default_name)
 
     print("TriDef에 등록된 게임:")
     for i, name in enumerate(games, 1):
-        marker = " (최근 실행)" if i == 1 and last_used == name else ""
+        marker = " (최근 선택됨)" if i == 1 and default_name == name else ""
         print(f"  {i}) {name}{marker}")
     print()
     choice = input(f"번호 선택 (엔터 = 1): ").strip()
@@ -402,16 +446,7 @@ if __name__ == '__main__':
     if positional:
         game_name = positional[0]
     else:
-        # No game named on the command line - if Ignition's own "last
-        # selected" value points at something we can actually launch
-        # (e.g. you just added/selected it in Ignition's UI), go straight
-        # to it instead of making you pick it again from the list too.
-        ignition_last = get_ignition_last_game_name()
-        if ignition_last:
-            print(f"TriDef Ignition에 마지막으로 등록/선택된 게임: {ignition_last} - 바로 실행합니다.")
-            game_name = ignition_last
-        else:
-            game_name = prompt_for_game_name()
+        game_name = prompt_for_game_name()
 
     if not game_name:
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
