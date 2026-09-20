@@ -33,6 +33,8 @@ no Direct3D in it, and told you so. Details in
    existing install/license — this project doesn't provide one).
 2. Add the game once in TriDef 3D Ignition's own UI (you never need to
    actually launch it from there — in fact, don't; that's the pop-up).
+   Ignition doesn't need to be running afterwards; the tool works with it
+   open or closed.
 3. Run `Tridef3D_Play.exe` (as Administrator) — from
    [Releases](../../releases), no Python required.
 
