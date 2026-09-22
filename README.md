@@ -219,6 +219,20 @@ yet (no such title was available to test against). Static detection of
 which API a game uses doesn't work: Unity and Source both load their
 Direct3D backend dynamically at runtime rather than importing it.
 
+## SR panels (SpatialLabs / Simulated Reality)
+
+`Tridef3D_Play_SR.exe` (or `Tridef3D_Play.exe --sr`) does everything above
+and then injects one more DLL after TriDef's: `sr\x86\SRWeaveDX9.dll` for
+32-bit games or `sr\x64\SRWeaveDX11.dll` for 64-bit ones. That DLL comes
+from the [SRCapture3D](https://github.com/nautymac/SRCapture3D) project's
+`weave/` and weaves TriDef's side-by-side output for a lenticular SR panel
+inside the game process, right before `Present` - no capture, no extra
+frame of latency, exclusive fullscreen works. Needs the SR / SpatialLabs
+runtime installed (the 32-bit runtime too for 32-bit games). Hotkeys in
+the game: Ctrl+Alt+W weave on/off, Ctrl+Alt+S swap eyes, Ctrl+Alt+T
+red/blue test pattern, Ctrl+Alt+L lens. Log and `SRWeave.ini` sit next to
+the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
+
 ## Requirements
 
 - Windows 10/11, 64-bit
