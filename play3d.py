@@ -210,6 +210,25 @@ def get_tridef_game_appid(game_name):
     return appid
 
 
+def get_registered_exe(game_name):
+    """The game exe Ignition itself has on record, if any. Games added to
+    Ignition as a Steam title store Path=steam.exe (useless here), but
+    games added by pointing Ignition at the exe store that exe directly -
+    and then there's nothing to guess. Returns None when Ignition has no
+    usable exe for this game."""
+    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+            path = winreg.QueryValueEx(k, "Path")[0]
+    except OSError:
+        return None
+    if not path or not path.lower().endswith(".exe"):
+        return None
+    if os.path.basename(path).lower() == "steam.exe":
+        return None
+    return path if os.path.exists(path) else None
+
+
 def sync_ignition_argument_with_fix(game_name, appid):
     """Writes -no-browser -no-cef-sandbox steam://rungameid/<appid> back
     into Ignition's own Argument value for this game, so TriDef 3D
@@ -340,12 +359,18 @@ def play3d(game_name, dry_run=False, steam_flags=True):
     install_dir = os.path.join(lib_path, "steamapps", "common", installdir_name)
     print(f"Install dir: {install_dir}")
 
-    exe_path = guess_main_exe(install_dir)
-    if not exe_path:
-        print(f"ERROR: no .exe found in {install_dir}")
-        return False
+    # If Ignition has the game's exe on record (game added by exe rather
+    # than as a Steam title), trust that over guessing from the folder.
+    exe_path = get_registered_exe(game_name)
+    if exe_path:
+        print(f"Main exe (from Ignition's registration): {os.path.basename(exe_path)}")
+    else:
+        exe_path = guess_main_exe(install_dir)
+        if not exe_path:
+            print(f"ERROR: no .exe found in {install_dir}")
+            return False
+        print(f"Detected main exe: {os.path.basename(exe_path)}")
     image_name = os.path.basename(exe_path)
-    print(f"Detected main exe: {image_name}")
 
     is_64bit = is_64bit_exe(exe_path)
     print(f"Architecture: {'64-bit' if is_64bit else '32-bit'}")

@@ -133,11 +133,13 @@ through this tool.
   thread suspension is used: freezing a brand-new process's only thread
   is very likely to freeze it *while it holds its own loader lock*, which
   would deadlock the injection thread forever. Plain speed avoids that.
-- **Only the real game exe counts.** The target is picked from the
-  install folder by name (an exe matching the folder name wins, e.g.
-  `BinaryDomain.exe` in `Binary Domain`), skipping launcher, updater,
-  crash-handler and configuration/options windows; the skipped ones are
-  listed in the log. Some games (Binary Domain) have Steam open a
+- **Only the real game exe counts.** If you added the game to Ignition
+  by pointing it at the exe, that exe is used as-is. Games added as Steam
+  titles only record `steam.exe` there, so for those the target is picked
+  from the install folder by name (an exe matching the folder name wins,
+  e.g. `BinaryDomain.exe` in `Binary Domain`), skipping launcher,
+  updater, crash-handler and configuration/options windows; the skipped
+  ones are listed in the log. Some games (Binary Domain) have Steam open a
   configuration window first and only spawn the real game when you press
   Start in it — the tool ignores that window and keeps waiting (up to
   three minutes) for the actual game process, so just click Start as
