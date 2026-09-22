@@ -538,8 +538,19 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
         subprocess.Popen(["cmd", "/c", "start", "", launch_uri_or_none], shell=False)
         print(f"triggered launch: {launch_uri_or_none}")
 
+    # Only a process with the *target* image name counts. Anything else
+    # Steam starts first - a configuration/launcher window such as Binary
+    # Domain's BinaryDomainConfiguration.exe - is simply not it, and we keep
+    # waiting until the user starts the real game from that window. That is
+    # why the timeout is long and there's a periodic reminder.
     start = time.time()
+    next_note = 8.0
     while time.time() - start < timeout_s:
+        elapsed = time.time() - start
+        if elapsed >= next_note:
+            print(f"  ...still waiting for {image_name} ({elapsed:.0f}s). If a launcher/"
+                  f"configuration window opened, start the game from it.")
+            next_note += 15.0
         current = get_pids_by_name(image_name)
         new_pids = current - baseline
         if new_pids:

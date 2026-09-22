@@ -112,10 +112,18 @@ def is_64bit_exe(exe_path):
 # Helper/launcher processes to never treat as "the game" when guessing
 # which .exe in an install folder is the real one.
 EXE_EXCLUDE_PATTERNS = [
-    "crashpad_handler", "unitycrashhandler", "installer", "uninstall",
-    "redist", "vcredist", "dxsetup", "helper", "launcher", "updater",
-    "battleye", "easyanticheat", "eac",
+    "crashpad_handler", "unitycrashhandler", "crashreport", "crashhandler",
+    "installer", "uninstall", "unins", "redist", "vcredist", "dxsetup",
+    "helper", "launcher", "updater", "battleye", "easyanticheat", "eac",
+    # Pre-game option/launcher windows. Binary Domain ships
+    # BinaryDomainConfiguration.exe, which Steam starts first; the real
+    # BinaryDomain.exe is only spawned when you press Start in it.
+    "configuration", "config", "settings", "options", "setup",
 ]
+
+
+def _norm(s):
+    return re.sub(r'[^a-z0-9]', '', s.lower())
 
 
 def get_steam_path():
@@ -258,18 +266,36 @@ def find_library_folder_for_app(steam_path, appid):
 
 
 def guess_main_exe(install_dir):
+    """Pick the real game executable out of the install folder.
+
+    Order of preference:
+      1. an exe whose name matches the install folder's name once both are
+         stripped to [a-z0-9] ("Binary Domain" -> BinaryDomain.exe), and
+         which isn't on the exclude list;
+      2. the largest exe not on the exclude list;
+      3. the largest exe of any kind (fallback if the list ate everything).
+
+    Excluded-but-present exes are printed so a wrong guess is visible in
+    the log rather than silent."""
     exes = glob.glob(os.path.join(install_dir, "*.exe"))
-    candidates = []
+    if not exes:
+        return None
+    folder_key = _norm(os.path.basename(install_dir.rstrip("\\/")))
+
+    candidates, skipped = [], []
     for exe in exes:
         base = os.path.basename(exe).lower()
-        if any(pat in base for pat in EXE_EXCLUDE_PATTERNS):
-            continue
-        candidates.append(exe)
+        (skipped if any(pat in base for pat in EXE_EXCLUDE_PATTERNS) else candidates).append(exe)
+    if skipped:
+        print("Ignoring launcher/helper exes: " + ", ".join(os.path.basename(s) for s in skipped))
     if not candidates:
         candidates = exes
-    if not candidates:
-        return None
-    # prefer the largest exe (helper/updater stubs are usually tiny)
+
+    by_name = [c for c in candidates
+               if folder_key and _norm(os.path.splitext(os.path.basename(c))[0]) == folder_key]
+    if by_name:
+        return by_name[0]
+    # otherwise prefer the largest exe (helper/updater stubs are usually tiny)
     candidates.sort(key=lambda p: os.path.getsize(p), reverse=True)
     return candidates[0]
 
@@ -370,7 +396,11 @@ def play3d(game_name, dry_run=False, steam_flags=True):
         print("(dry run - not actually launching)")
         return True
 
+    # Long timeout on purpose: games with a pre-game configuration/launcher
+    # window (Binary Domain) don't start the real exe until the user clicks
+    # Start in it, and that can take a while.
     pid = injector.poll_launch_and_inject(image_name, launch_uri_for_shell, standard_dlls,
+                                           timeout_s=180,
                                            injector_python=injector_python,
                                            launch_cmd=launch_cmd)
     if pid:
