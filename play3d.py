@@ -319,7 +319,7 @@ def guess_main_exe(install_dir):
     return candidates[0]
 
 
-def play3d(game_name, dry_run=False, steam_flags=True):
+def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
     print(f"=== TriDef 3D launch: {game_name} ===")
 
     appid = get_tridef_game_appid(game_name)
@@ -379,6 +379,18 @@ def play3d(game_name, dry_run=False, steam_flags=True):
     launch_uri = f"steam://rungameid/{appid}"
 
     standard_dlls = get_standard_dlls(is_64bit)
+    if sr:
+        # SR (Simulated Reality / SpatialLabs) panels: after TriDef has drawn its
+        # side-by-side image, SRWeaveDX9/DX11.dll (from the SRCapture3D project)
+        # weaves it for the lenticular display inside the game process, right
+        # before Present. It must load AFTER TriDef's DLLs, which sequential
+        # injection guarantees. Bitness picks the API set just like TriDef's.
+        sr_dll = os.path.join(get_app_dir(), "sr", "x64" if is_64bit else "x86",
+                              "SRWeaveDX11.dll" if is_64bit else "SRWeaveDX9.dll")
+        if not os.path.exists(sr_dll):
+            print(f"ERROR: --sr requested but {sr_dll} is missing")
+            return False
+        standard_dlls = standard_dlls + [sr_dll]
     print(f"DLLs to inject:")
     for d in standard_dlls:
         exists = "OK" if os.path.exists(d) else "MISSING!"
@@ -535,7 +547,7 @@ def prompt_for_game_name():
     return choice  # allow typing a name not in the list too
 
 
-def main(default_steam_flags=False):
+def main(default_steam_flags=False, default_sr=False):
     dry_run = '--dry-run' in sys.argv
     if '--steam-flags' in sys.argv:
         steam_flags = True
@@ -543,7 +555,8 @@ def main(default_steam_flags=False):
         steam_flags = False
     else:
         steam_flags = default_steam_flags
-    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--steam-flags', '--no-steam-flags')]
+    sr = default_sr or '--sr' in sys.argv
+    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr')]
 
     if positional:
         game_name = positional[0]
@@ -554,7 +567,7 @@ def main(default_steam_flags=False):
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
         sys.exit(1)
 
-    ok = play3d(game_name, dry_run=dry_run, steam_flags=steam_flags)
+    ok = play3d(game_name, dry_run=dry_run, steam_flags=steam_flags, sr=sr)
     if ok and not dry_run:
         save_last_used(game_name)
     sys.exit(0 if ok else 1)
