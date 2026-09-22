@@ -83,6 +83,12 @@ Binary Domain (DX9, 32비트) + TriDef 3D: 임시 디바이스 래퍼의 `GetSwa
 그 힙 vtable로 지문을 떠 원본 `Present`/`Reset`을 찾는다. 결과: 훅 → SR 컨텍스트 → 위버 → `first weaved frame: 3840x2160`,
 패널에서 육안으로 위빙 확인 (2026-09-23). 관리자 권한 없이 `Tridef3D_Play_SR.exe`로 주입해도 된다(게임을 Steam이 일반 권한으로 띄우므로).
 
+Gone Home (DX11, 64비트) + TriDef 3D: TriDef의 DXGI 계층(`TriDefDXGI64.dll`)도 스왑체인을 완전 래퍼로 돌려줘 처음엔 훅이
+0개였다. DX9 디바이스와 같은 대체 경로(`FindInnerBySlots`로 래퍼의 1번 필드에서 dxgi.dll vtable을 가진 진짜 스왑체인을 찾고
+`QueryInterface(IDXGISwapChain)`으로 확인)로 `Present`/`Present1`/`ResizeBuffers`를 후킹. 결과: 위버 생성 →
+`first weaved frame: 3840x2160`, `ResizeBuffers` 두 번 통과, 게임 생존 (2026-09-23).
+Left 4 Dead는 같은 빌드로 회귀 확인(스왑체인 경로 그대로 동작).
+
 ## 라이선스
 
 MIT (`LICENSE`). 포함된 [MinHook](https://github.com/TsudaKageyu/minhook)은 BSD-2
