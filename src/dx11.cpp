@@ -362,11 +362,31 @@ void InstallHooks()
         if (sc) {
             void** vt = *(void***)sc;
             Log("temp swap chain %p vtable %p in %s", (void*)sc, (void*)vt, ModuleOf(vt).c_str());
-            HookOne("IDXGISwapChain::Present", ResolveReal("IDXGISwapChain::Present", vt, 18, 8), (void*)&Hook_Present, (void**)&g_origPresent);
-            HookOne("IDXGISwapChain::ResizeBuffers", ResolveReal("IDXGISwapChain::ResizeBuffers", vt, 18, 13), (void*)&Hook_ResizeBuffers, (void**)&g_origResizeBuffers);
+            // TriDef's DXGI layer (TriDefDXGI64.dll) hands back a full wrapper - every slot in
+            // its own module, nothing to fingerprint. Same trick as the DX9 device wrapper: the
+            // real IDXGISwapChain is one of the wrapper's members; find it by how many of its
+            // vtable slots point into dxgi.dll, confirm with QueryInterface.
+            IUnknown* realSc = (IUnknown*)sc;
+            void** realVt = vt;
+            if (!AddrInModule(vt, g_dxgi)) {
+                void** innerVt = nullptr;
+                int field = 1;
+                void* inner = nullptr;
+                while (void* cand = FindInnerBySlots(sc, g_dxgi, 18, 12, &innerVt, &field)) {
+                    IDXGISwapChain* asSc = nullptr;
+                    HRESULT hq = ((IUnknown*)cand)->QueryInterface(__uuidof(IDXGISwapChain), (void**)&asSc);
+                    if (SUCCEEDED(hq) && asSc) { asSc->Release(); inner = cand; break; }
+                    Log("  object %p is not a swap chain (QI 0x%08lx) - keep looking", cand, hq);
+                }
+                if (inner) { realSc = (IUnknown*)inner; realVt = innerVt; }
+                else Log("no real swap chain found among the wrapper's fields");
+            }
+            HookOne("IDXGISwapChain::Present", ResolveReal("IDXGISwapChain::Present", realVt, 18, 8), (void*)&Hook_Present, (void**)&g_origPresent);
+            HookOne("IDXGISwapChain::ResizeBuffers", ResolveReal("IDXGISwapChain::ResizeBuffers", realVt, 18, 13), (void*)&Hook_ResizeBuffers, (void**)&g_origResizeBuffers);
             IDXGISwapChain1* sc1 = nullptr;
-            if (SUCCEEDED(sc->QueryInterface(__uuidof(IDXGISwapChain1), (void**)&sc1)) && sc1) {
+            if (SUCCEEDED(realSc->QueryInterface(__uuidof(IDXGISwapChain1), (void**)&sc1)) && sc1) {
                 void** vt1 = *(void***)sc1;
+                Log("real swap chain as IDXGISwapChain1 %p vtable %p in %s", (void*)sc1, (void*)vt1, ModuleOf(vt1).c_str());
                 HookOne("IDXGISwapChain1::Present1", ResolveReal("IDXGISwapChain1::Present1", vt1, 18, 22), (void*)&Hook_Present1, (void**)&g_origPresent1);
             }
         }
