@@ -40,6 +40,12 @@ void* CleanVtableEntry(HMODULE realMod, const wchar_t* sysDllName, void** vtable
 // pointer-sized field that points at an object whose vtable (entries 0..mustHaveIndex) is
 // inside `mod`. Returns nullptr if nothing plausible is found. Optionally returns the inner object.
 void** UnwrapVtable(void* obj, HMODULE mod, int mustHaveIndex, void** innerObj = nullptr);
+// Looser variant for objects whose vtable pointer TriDef redirected to a heap copy: find, among
+// the wrapper's first fields, an object whose vtable (wherever it lives) has at least `minHits`
+// of its first `nSlots` entries inside `mod`. Returns that object; *outVt gets its live vtable.
+// Scanning starts at field `*field` and advances it past the match, so a caller can reject a
+// candidate and keep looking.
+void* FindInnerBySlots(void* obj, HMODULE mod, int nSlots, int minHits, void*** outVt, int* field);
 // TriDef copies an object's vtable to the heap and patches a few slots (Present, Reset...).
 // Given that live copy, use its *unpatched* slots (the ones still pointing into `realMod`,
 // among the first `nMatch`) as a fingerprint to locate the original vtable inside the on-disk

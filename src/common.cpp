@@ -149,6 +149,34 @@ void** UnwrapVtable(void* obj, HMODULE mod, int mustHaveIndex, void** innerObj)
     return nullptr;
 }
 
+void* FindInnerBySlots(void* obj, HMODULE mod, int nSlots, int minHits, void*** outVt, int* field)
+{
+    if (outVt) *outVt = nullptr;
+    if (!obj || !mod) return nullptr;
+    for (int i = (field && *field > 0) ? *field : 1; i < 256; i++) {
+        void* cand = nullptr;
+        if (!ReadPtr((void**)obj + i, &cand) || !cand || cand == obj) continue;
+        if (((ULONG_PTR)cand & (sizeof(void*) - 1)) != 0) continue;
+        void** cvt = nullptr;
+        if (!ReadPtr(cand, (void**)&cvt) || !cvt) continue;
+        if (((ULONG_PTR)cvt & (sizeof(void*) - 1)) != 0) continue;
+        int hits = 0;
+        for (int k = 0; k < nSlots; k++) {
+            void* f = nullptr;
+            if (!ReadPtr(&cvt[k], &f)) { hits = -1; break; }
+            if (f && AddrInModule(f, mod)) hits++;
+        }
+        if (hits >= minHits) {
+            Log("inner by slots: field %d of %p -> object %p, vtable %p in %s (%d/%d slots in module)",
+                i, obj, cand, (void*)cvt, ModuleOf(cvt).c_str(), hits, nSlots);
+            if (outVt) *outVt = cvt;
+            if (field) *field = i + 1;
+            return cand;
+        }
+    }
+    return nullptr;
+}
+
 void* CleanVtableEntryByFingerprint(HMODULE realMod, const wchar_t* sysDllName, void** liveVt, int nMatch, int index)
 {
     if (!realMod || !liveVt) return nullptr;

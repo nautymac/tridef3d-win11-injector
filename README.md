@@ -69,3 +69,9 @@ MinHook은 `weave\third_party\minhook`에 포함.
 
 Left 4 Dead (DX9, 32비트) + TriDef 3D: 진짜 `d3d9.dll` 함수에 훅, SR 컨텍스트·위버 생성, `first weaved frame`,
 게임 내 해상도 변경(`Reset`) 두 번 통과, 게임 생존.
+
+Binary Domain (DX9, 32비트) + TriDef 3D: 임시 디바이스 래퍼의 `GetSwapChain(0)`이 `0x8876086c`(D3DERR_INVALIDCALL)로
+실패해서 처음엔 훅이 하나도 안 걸렸다. 대체 경로 추가 — 스왑체인 대신 **디바이스 래퍼의 멤버에서 진짜 디바이스를 직접 찾는다**
+(`FindInnerBySlots`: vtable 119칸 중 80칸 이상이 `d3d9.dll`을 가리키는 객체, `QueryInterface(IDirect3DDevice9)`로 확인).
+그 힙 vtable로 지문을 떠 원본 `Present`/`Reset`을 찾는다. 결과: 훅 → SR 컨텍스트 → 위버 → `first weaved frame: 3840x2160`,
+패널에서 육안으로 위빙 확인 (2026-09-23). 관리자 권한 없이 `Tridef3D_Play_SR.exe`로 주입해도 된다(게임을 Steam이 일반 권한으로 띄우므로).

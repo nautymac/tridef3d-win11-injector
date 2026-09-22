@@ -357,7 +357,9 @@ void InstallHooks()
             void** devVt = nullptr;
             void** scVt = nullptr;
             IDirect3DSwapChain9* wsc = nullptr;
-            if (SUCCEEDED(dev->GetSwapChain(0, &wsc)) && wsc) {
+            HRESULT hrSc = dev->GetSwapChain(0, &wsc);
+            if (FAILED(hrSc) || !wsc) Log("temp GetSwapChain(0) failed: 0x%08lx (%p)", hrSc, (void*)wsc);
+            if (SUCCEEDED(hrSc) && wsc) {
                 Log("temp swap chain %p vtable in %s", (void*)wsc, ModuleOf(*(void**)wsc).c_str());
                 void* realSc = nullptr;
                 scVt = UnwrapVtable(wsc, g_d3d9, 9, &realSc);
@@ -372,6 +374,39 @@ void InstallHooks()
                     }
                 } else {
                     Log("could not see through the swap chain wrapper");
+                }
+            }
+            // Fallback (Binary Domain): the wrapper's GetSwapChain fails, so look for the real
+            // device directly among the device wrapper's own fields. Its vtable is TriDef's heap
+            // copy, but most of its 119 slots still point into d3d9.dll.
+            if (!devVt) {
+                void** innerVt = nullptr;
+                void* inner = nullptr;
+                int field = 1;
+                while (void* cand = FindInnerBySlots(dev, g_d3d9, 119, 80, &innerVt, &field)) {
+                    // slot 0 lives in d3d9.dll, so this is a real d3d9 COM object - QI is safe
+                    IDirect3DDevice9* asDev = nullptr;
+                    HRESULT hq = ((IUnknown*)cand)->QueryInterface(__uuidof(IDirect3DDevice9), (void**)&asDev);
+                    if (SUCCEEDED(hq) && asDev) { asDev->Release(); inner = cand; break; }
+                    Log("  object %p is not a device (QI 0x%08lx) - keep looking", cand, hq);
+                }
+                if (inner) {
+                    devVt = innerVt;
+                    if (!scVt) {
+                        // ask the real device for its real swap chain (GetSwapChain slot isn't patched)
+                        IDirect3DSwapChain9* rsc = nullptr;
+                        HRESULT hr = ((IDirect3DDevice9*)inner)->GetSwapChain(0, &rsc);
+                        if (SUCCEEDED(hr) && rsc) {
+                            void** rscVt = *(void***)rsc;
+                            Log("real swap chain %p vtable %p in %s", (void*)rsc, (void*)rscVt, ModuleOf(rscVt).c_str());
+                            scVt = rscVt;
+                            rsc->Release();
+                        } else {
+                            Log("real device GetSwapChain(0) failed: 0x%08lx", hr);
+                        }
+                    }
+                } else {
+                    Log("no real device found among the device wrapper's fields");
                 }
             }
             if (devVt) {
