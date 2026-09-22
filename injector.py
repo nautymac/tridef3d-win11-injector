@@ -529,6 +529,10 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
     import time, subprocess
 
     baseline = get_pids_by_name(image_name)
+    if baseline:
+        print(f"WARNING: {image_name} is already running (PID {', '.join(map(str, sorted(baseline)))}). "
+              f"Steam won't start a second copy - close the running game first, then retry.")
+        return None
     print(f"baseline {image_name} pids (ignored): {baseline}")
 
     if launch_cmd:
