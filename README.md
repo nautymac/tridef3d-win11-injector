@@ -219,16 +219,21 @@ yet (no such title was available to test against). Static detection of
 which API a game uses doesn't work: Unity and Source both load their
 Direct3D backend dynamically at runtime rather than importing it.
 
-## SR / SpatialLabs lenticular panels (`--sr`)
+## SR panels (SpatialLabs / Simulated Reality)
 
-On a Simulated Reality panel (Acer SpatialLabs, Leia SR) TriDef's side-by-side image still has to be
-woven for the lenticular lens. `Tridef3D_Play_SR.exe` (or `Tridef3D_Play.exe --sr`) injects
-`SRWeaveDX9.dll` / `SRWeaveDX11.dll` after TriDef's own DLLs, and that DLL weaves the back buffer
-inside the game process right before `Present` — no capture, no ReShade, exclusive fullscreen still
-works. The source for those DLLs lives in [`srweave\`](srweave/) (Korean README there, MIT, MinHook
-vendored); build it with `srweave\build.ps1` and the launcher finds it in `srweave\bin\<arch>\`, or
-ship it as `sr\<arch>\` next to the exe. Verified on Left 4 Dead and Binary Domain (DX9, 32-bit) and
-Gone Home (DX11, 64-bit).
+`Tridef3D_Play_SR.exe` (or `Tridef3D_Play.exe --sr`) does everything above
+and then injects one more DLL after TriDef's: `sr\x86\SRWeaveDX9.dll` for
+32-bit games or `sr\x64\SRWeaveDX11.dll` for 64-bit ones. That DLL is built
+from [`srweave\`](srweave/) in this repo (`srweave\build.ps1`; the launcher
+also accepts it at `srweave\bin\<arch>\`) and weaves TriDef's side-by-side
+output for a lenticular SR panel
+inside the game process, right before `Present` - no capture, no extra
+frame of latency, exclusive fullscreen works. Needs the SR / SpatialLabs
+runtime installed (the 32-bit runtime too for 32-bit games). Hotkeys in
+the game: Ctrl+Alt+W weave on/off, Ctrl+Alt+S swap eyes, Ctrl+Alt+T
+red/blue test pattern, Ctrl+Alt+L lens. Log and `SRWeave.ini` sit next to
+the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
+>>>>>>> origin/master
 
 ## Requirements
 
