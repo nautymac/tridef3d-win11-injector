@@ -226,14 +226,12 @@ and then injects one more DLL after TriDef's: `sr\x86\SRWeaveDX9.dll` for
 32-bit games or `sr\x64\SRWeaveDX11.dll` for 64-bit ones. That DLL is built
 from [`srweave\`](srweave/) in this repo (`srweave\build.ps1`; the launcher
 also accepts it at `srweave\bin\<arch>\`) and weaves TriDef's side-by-side
-output for a lenticular SR panel
-inside the game process, right before `Present` - no capture, no extra
+output for a lenticular SR panel inside the game process, right before `Present` - no capture, no extra
 frame of latency, exclusive fullscreen works. Needs the SR / SpatialLabs
 runtime installed (the 32-bit runtime too for 32-bit games). Hotkeys in
 the game: Ctrl+Alt+W weave on/off, Ctrl+Alt+S swap eyes, Ctrl+Alt+T
 red/blue test pattern, Ctrl+Alt+L lens. Log and `SRWeave.ini` sit next to
 the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
->>>>>>> origin/master
 
 ## Requirements
 
