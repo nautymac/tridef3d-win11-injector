@@ -1,14 +1,18 @@
 # SRWeave — DX9/DX11 게임 안에서 SR SDK로 직접 위빙
 
-TriDef 3D가 만든 좌우(SBS) 화면을 **게임 프로세스 안에서, `Present` 직전에** SR 런타임으로 렌티큘러 위빙한다.
-SRCapture3D(캡처 → 위빙)보다 한 프레임 빠르고, 전체화면 독점 모드도 그대로 된다.
+이미 좌우(SBS)로 만들어진 게임 화면을 **게임 프로세스 안에서, `Present` 직전에** SR(Simulated Reality / Acer SpatialLabs)
+런타임으로 렌티큘러 위빙한다. SBS를 누가 만들었는지는 상관없다 — TriDef 3D, Geo-11/3DMigoto, ReShade SuperDepth3D 모두 된다.
+화면을 캡처해서 위빙하는 방식([SRCapture3D](https://github.com/nautymac/SRCapture3D))보다 한 프레임 빠르고,
+전체화면 독점 모드도 그대로 된다.
+
+필요한 것: SR/SpatialLabs 런타임이 설치되어 SR Service가 돌고 있는 렌티큘러 3D 패널.
 
 | 파일 | 대상 | 후킹 지점 |
 |---|---|---|
 | `SRWeaveDX9.dll` (x86/x64) | DirectX 9 | `IDirect3DDevice9::Present` / `Reset`, `IDirect3DSwapChain9::Present` |
 | `SRWeaveDX11.dll` (x86/x64) | DirectX 11 | `IDXGISwapChain::Present` / `Present1` / `ResizeBuffers` |
 
-산출물은 `bin\weave\x64\`, `bin\weave\x86\`.
+산출물은 `bin\x64\`, `bin\x86\`. 게임이 32비트면 x86, 64비트면 x64 DLL을 쓴다.
 
 ## 쓰는 법
 
@@ -58,12 +62,15 @@ TriDef는 `d3d9.dll` 내부의 디바이스 생성까지 후킹해서 **모든 �
 
 ```
 powershell -ExecutionPolicy Bypass -File setup-deps.ps1 -SrSdkInstaller <win64.exe> -SrSdk32Installer <win32.exe>
-powershell -ExecutionPolicy Bypass -File weave\build-weave.ps1
+powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-MSVC(x86·x64 크로스 툴)와 Windows 10 SDK만 있으면 된다. `build-weave.ps1`은 vswhere 없이 MSVC와 SDK를 직접 찾아
-Ninja로 두 아키텍처를 빌드한다. CRT는 정적 링크, SR 런타임 DLL은 지연 로드(SpatialLabs 설치 폴더에서 찾는다),
-MinHook은 `weave\third_party\minhook`에 포함.
+MSVC(x86·x64 크로스 툴)와 Windows 10 SDK만 있으면 된다. `build.ps1`은 MSVC와 SDK를 직접 찾아 Ninja로 두 아키텍처를
+빌드한다(찾지 못하면 `$env:SRWEAVE_MSVC`, `$env:SRWEAVE_SDK`로 지정). CRT는 정적 링크, SR 런타임 DLL은 지연
+로드(SpatialLabs 설치 폴더에서 찾는다), MinHook(BSD-2)은 `third_party\minhook`에 포함.
+
+SR SDK는 재배포하지 않는다 — LeiaSR/SpatialLabs 런타임 설치본에서 `setup-deps.ps1`로 풀어 쓴다. x86 DLL을 빌드하려면
+win32 판 SDK도 필요하고, 그것은 win64 설치 파일을 풀면 나오는 `temp\` 폴더 안에 들어 있다.
 
 ## 검증 (2026-09-23)
 
@@ -75,3 +82,8 @@ Binary Domain (DX9, 32비트) + TriDef 3D: 임시 디바이스 래퍼의 `GetSwa
 (`FindInnerBySlots`: vtable 119칸 중 80칸 이상이 `d3d9.dll`을 가리키는 객체, `QueryInterface(IDirect3DDevice9)`로 확인).
 그 힙 vtable로 지문을 떠 원본 `Present`/`Reset`을 찾는다. 결과: 훅 → SR 컨텍스트 → 위버 → `first weaved frame: 3840x2160`,
 패널에서 육안으로 위빙 확인 (2026-09-23). 관리자 권한 없이 `Tridef3D_Play_SR.exe`로 주입해도 된다(게임을 Steam이 일반 권한으로 띄우므로).
+
+## 라이선스
+
+MIT (`LICENSE`). 포함된 [MinHook](https://github.com/TsudaKageyu/minhook)은 BSD-2
+(`third_party\minhook\LICENSE.txt`). SR SDK와 런타임은 포함하지 않는다 — Leia/Acer 것이다.

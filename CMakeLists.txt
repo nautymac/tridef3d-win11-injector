@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # VC++ redistributable (32-bit ones in particular).
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-set(ROOT "${CMAKE_SOURCE_DIR}/..")
+set(ROOT "${CMAKE_SOURCE_DIR}")
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(ARCH x64)
     set(SR_SDK "${ROOT}/third_party/sr-sdk")
@@ -33,7 +33,7 @@ if(NOT EXISTS "${SR_OPENCV_LIB}")
     message(FATAL_ERROR "SDK OpenCV import lib missing: ${SR_OPENCV_LIB}")
 endif()
 
-set(SRWEAVE_OUT_DIR "${ROOT}/bin/weave/${ARCH}" CACHE PATH "output folder for the DLLs")
+set(SRWEAVE_OUT_DIR "${ROOT}/bin/${ARCH}" CACHE PATH "output folder for the DLLs")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(MINHOOK_HDE third_party/minhook/src/hde/hde64.c)

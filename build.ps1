@@ -1,5 +1,5 @@
-# Build SRWeaveDX9.dll / SRWeaveDX11.dll for x64 and x86.
-# Output: bin\weave\x64\*.dll and bin\weave\x86\*.dll
+﻿# Build SRWeaveDX9.dll / SRWeaveDX11.dll for x64 and x86.
+# Output: bin\x64\*.dll and bin\x86\*.dll
 #
 # Sets up the MSVC + Windows SDK environment by hand (no vswhere/vcvars: they fail on machines
 # where the VS instance isn't registered) and drives the CMake/Ninja bundled with Visual Studio.
@@ -10,8 +10,19 @@ $ErrorActionPreference = 'Stop'
 
 $msvc = $env:SRWEAVE_MSVC
 if (-not $msvc) {
-    $msvc = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*" -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+    # Visual Studio is not always under Program Files (this machine has it on D:), so ask vswhere
+    # too - it knows where registered instances live.
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $roots = @("$env:ProgramFiles\Microsoft Visual Studio", "${env:ProgramFiles(x86)}\Microsoft Visual Studio")
+    if (Test-Path $vswhere) {
+        $found = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($found) { $roots = @($found) + $roots }
+    }
+    foreach ($r in $roots) {
+        $msvc = Get-ChildItem "$r\*\*\VC\Tools\MSVC\*", "$r\VC\Tools\MSVC\*" -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+        if ($msvc) { break }
+    }
 }
 if (-not $msvc) { throw 'MSVC toolset not found (set $env:SRWEAVE_MSVC)' }
 $vsRoot = ($msvc -replace '\\VC\\Tools\\MSVC\\[^\\]+$', '')
@@ -51,4 +62,4 @@ foreach ($arch in $Archs) {
     & $cmake --build $b
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-Get-ChildItem (Join-Path $root '..\bin\weave') -Recurse -Filter *.dll | Select-Object FullName, Length, LastWriteTime
+Get-ChildItem (Join-Path $root 'bin') -Recurse -Filter *.dll | Select-Object FullName, Length, LastWriteTime

@@ -1,0 +1,4 @@
+build-*/
+bin/
+third_party/sr-sdk/
+third_party/sr-sdk32/
