@@ -1,0 +1,8 @@
+EXPORTS
+    CreateDXGIFactory
+    CreateDXGIFactory1
+    CreateDXGIFactory2
+    DXGIDeclareAdapterRemovalSupport
+    DXGIGetDebugInterface1
+    D3D11CreateDevice
+    D3D11CreateDeviceAndSwapChain
