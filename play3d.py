@@ -381,14 +381,21 @@ def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
     standard_dlls = get_standard_dlls(is_64bit)
     if sr:
         # SR (Simulated Reality / SpatialLabs) panels: after TriDef has drawn its
-        # side-by-side image, SRWeaveDX9/DX11.dll (from the SRCapture3D project)
-        # weaves it for the lenticular display inside the game process, right
-        # before Present. It must load AFTER TriDef's DLLs, which sequential
-        # injection guarantees. Bitness picks the API set just like TriDef's.
-        sr_dll = os.path.join(get_app_dir(), "sr", "x64" if is_64bit else "x86",
-                              "SRWeaveDX11.dll" if is_64bit else "SRWeaveDX9.dll")
-        if not os.path.exists(sr_dll):
-            print(f"ERROR: --sr requested but {sr_dll} is missing")
+        # side-by-side image, SRWeaveDX9/DX11.dll (built from srweave\ in this
+        # repo) weaves it for the lenticular display inside the game process,
+        # right before Present. It must load AFTER TriDef's DLLs, which
+        # sequential injection guarantees. Bitness picks the API set like TriDef's.
+        arch = "x64" if is_64bit else "x86"
+        dll_name = "SRWeaveDX11.dll" if is_64bit else "SRWeaveDX9.dll"
+        # released layout first, then srweave\bin\<arch> so a source checkout works unpacked
+        candidates = [os.path.join(get_app_dir(), "sr", arch, dll_name),
+                      os.path.join(get_app_dir(), "srweave", "bin", arch, dll_name)]
+        sr_dll = next((p for p in candidates if os.path.exists(p)), None)
+        if not sr_dll:
+            print("ERROR: --sr requested but the weaving DLL is missing. Looked in:")
+            for p in candidates:
+                print(f"  {p}")
+            print("Build it with: powershell -ExecutionPolicy Bypass -File srweave\\build.ps1")
             return False
         standard_dlls = standard_dlls + [sr_dll]
     print(f"DLLs to inject:")

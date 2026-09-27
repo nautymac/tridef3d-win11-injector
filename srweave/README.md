@@ -91,5 +91,11 @@ Left 4 Dead는 같은 빌드로 회귀 확인(스왑체인 경로 그대로 동�
 
 ## 라이선스
 
-MIT (`LICENSE`). 포함된 [MinHook](https://github.com/TsudaKageyu/minhook)은 BSD-2
+MIT — 저장소 루트의 `LICENSE`. 포함된 [MinHook](https://github.com/TsudaKageyu/minhook)은 BSD-2
 (`third_party\minhook\LICENSE.txt`). SR SDK와 런타임은 포함하지 않는다 — Leia/Acer 것이다.
+
+## 이 폴더의 위치
+
+원래 [SRCapture3D](https://github.com/nautymac/SRCapture3D) 의 `weave\` 였고, 잠시 `nautymac/SRWeave` 저장소로
+나갔다가, 2026-09-27에 이 저장소(`tridef3d-win11-injector`)의 `srweave\` 로 들어왔다 — `--sr` 로 이 DLL을 주입하는
+런처와 늘 같이 쓰이기 때문이다. 히스토리는 그대로 남아 있다.

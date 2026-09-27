@@ -219,6 +219,17 @@ yet (no such title was available to test against). Static detection of
 which API a game uses doesn't work: Unity and Source both load their
 Direct3D backend dynamically at runtime rather than importing it.
 
+## SR / SpatialLabs lenticular panels (`--sr`)
+
+On a Simulated Reality panel (Acer SpatialLabs, Leia SR) TriDef's side-by-side image still has to be
+woven for the lenticular lens. `Tridef3D_Play_SR.exe` (or `Tridef3D_Play.exe --sr`) injects
+`SRWeaveDX9.dll` / `SRWeaveDX11.dll` after TriDef's own DLLs, and that DLL weaves the back buffer
+inside the game process right before `Present` — no capture, no ReShade, exclusive fullscreen still
+works. The source for those DLLs lives in [`srweave\`](srweave/) (Korean README there, MIT, MinHook
+vendored); build it with `srweave\build.ps1` and the launcher finds it in `srweave\bin\<arch>\`, or
+ship it as `sr\<arch>\` next to the exe. Verified on Left 4 Dead and Binary Domain (DX9, 32-bit) and
+Gone Home (DX11, 64-bit).
+
 ## Requirements
 
 - Windows 10/11, 64-bit
