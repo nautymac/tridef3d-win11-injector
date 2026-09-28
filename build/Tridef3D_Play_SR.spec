@@ -38,5 +38,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../res/Tridef3D_Play.ico',
+    icon='../res/Tridef3D_Play_SR.ico',
 )
