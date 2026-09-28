@@ -58,11 +58,6 @@ double-click-friendly wrapper. Works identically for 32-bit or 64-bit games
 `Inject32.exe`, which must sit in the same folder **for 32-bit games only**
 (see [How it works](#how-it-works)).
 
-The release also ships `Tridef3D_Play_steamflags.exe` (+ `.bat`), a backup
-variant that launches Steam with `-no-browser -no-cef-sandbox`. You
-shouldn't need it — see [DirectX 9 support](#directx-9-support) — but it's
-there if the plain build ever misbehaves on some title.
-
 ## Game profiles: what you get with and without one
 
 TriDef shipped ~800 hand-tuned per-game profiles, and the profile is what
@@ -124,10 +119,7 @@ through this tool.
 - **Launch through the `steam://` protocol:** `steam://rungameid/<id>`,
   opened via the shell handler. That's what makes Steamworks games
   initialize normally instead of detecting "not launched by Steam" and
-  silently relaunching themselves. (The backup `_steamflags` build
-  instead runs `steam.exe -no-browser -no-cef-sandbox steam://rungameid/<id>`
-  directly — see [DirectX 9 support](#directx-9-support) for why that
-  exists and why it isn't needed.)
+  silently relaunching themselves.
 - **Poll for the new process at native speed** (a tight loop over
   `CreateToolhelp32Snapshot`) and inject the instant it appears. No
   thread suspension is used: freezing a brand-new process's only thread
@@ -159,9 +151,7 @@ through this tool.
 - Before launching, the tool sets Ignition's `LastGameName` to the game
   being launched, which is how the injected DLL finds that game's profile
   (see [Game profiles](#game-profiles-what-you-get-with-and-without-one)).
-  It doesn't touch anything else in Ignition's registry. (The backup
-  `_steamflags` build additionally writes its two Steam flags into the
-  game's `Argument` value.)
+  It doesn't touch anything else in Ignition's registry.
 
 This repo contains **no TriDef binaries** and never copies or bundles
 them — it only calls `LoadLibraryW` on paths already present from the
@@ -200,11 +190,9 @@ were also each confirmed with the Steam flags removed.
 suggested launching Steam with `-no-browser -no-cef-sandbox`. It happened
 to be in place for the first success, so for a while it looked like the
 fix. Controlled runs with sequential loading and no flags work just as
-well on Left 4 Dead, The Cave and Gone Home, so the default build doesn't
-use them. The backup `Tridef3D_Play_steamflags.exe` (or `--steam-flags`
-on the main exe) still does, and also writes those flags into Ignition's
-per-game `Argument` value; keep it around in case some title turns out to
-care.
+well on Left 4 Dead, The Cave and Gone Home, so the tool doesn't use
+them. A backup build that did (`Tridef3D_Play_steamflags.exe`) shipped
+from v3.0.0 to v3.2.1 and was removed afterwards; nothing ever needed it.
 
 **One API set per process.** Do not inject the D3D9 and D3D11 sets
 together. `TriDefIgnition(64).dll` is shared state for both; loading both
@@ -261,7 +249,7 @@ it from a release, or build it as below).
 ```
 pip install pyinstaller
 pyinstaller build/Tridef3D_Play.spec --distpath .
-pyinstaller build/Tridef3D_Play_steamflags.spec --distpath .          # optional backup variant
+pyinstaller build/Tridef3D_Play_SR.spec --distpath .                 # SR panel variant
 powershell -ExecutionPolicy Bypass -File native/build_inject32.ps1   # Inject32.exe (needs MSVC x86 tools)
 ```
 

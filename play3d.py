@@ -69,7 +69,7 @@ def get_standard_dlls(is_64bit):
       ORDER MATTERS: Ignition first, then D3D9, loaded one at a time.
       TriDefD3D9.dll initialised before its Ignition counterpart stays
       inert - that (via a parallel-loading helper) was the real reason
-      DX9 looked flaky for so long, not the Steam flags in play3d().
+      DX9 looked flaky for so long, not how Steam was launched.
     - 64-bit: TriDefIgnition64.dll + TriDefD3D1164.dll + TriDefDXGI64.dll
       (Gone Home, DX11).
 
@@ -229,29 +229,6 @@ def get_registered_exe(game_name):
     return path if os.path.exists(path) else None
 
 
-def sync_ignition_argument_with_fix(game_name, appid):
-    """Writes -no-browser -no-cef-sandbox steam://rungameid/<appid> back
-    into Ignition's own Argument value for this game, so TriDef 3D
-    Ignition's own "Play" button also launches with the fix applied - not
-    just runs launched through this tool. Best-effort: this is a nice-to-
-    have, not something play3d() should fail over if the registry key is
-    missing/unwritable for some reason."""
-    fixed_argument = f"-no-browser -no-cef-sandbox steam://rungameid/{appid}"
-    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as k:
-            try:
-                current = winreg.QueryValueEx(k, "Argument")[0]
-            except FileNotFoundError:
-                current = None
-            if current != fixed_argument:
-                winreg.SetValueEx(k, "Argument", 0, winreg.REG_SZ, fixed_argument)
-                print(f"synced Ignition's own Argument for {game_name!r} -> {fixed_argument}")
-    except OSError as e:
-        print(f"(couldn't sync Ignition's Argument for {game_name!r}: {e})")
-    set_ignition_last_game(game_name)
-
-
 def set_ignition_last_game(game_name):
     """TriDefIgnition.dll, once inside the game, finds its per-game profile
     by reading Games\\<LastGameName>\\Profile - it has no other way of
@@ -319,16 +296,12 @@ def guess_main_exe(install_dir):
     return candidates[0]
 
 
-def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
+def play3d(game_name, dry_run=False, sr=False):
     print(f"=== TriDef 3D launch: {game_name} ===")
 
     appid = get_tridef_game_appid(game_name)
     print(f"Steam AppID: {appid}")
-    if steam_flags:
-        print("(steam-flags mode: launching steam.exe with -no-browser -no-cef-sandbox)")
-        sync_ignition_argument_with_fix(game_name, appid)
-    else:
-        set_ignition_last_game(game_name)
+    set_ignition_last_game(game_name)
 
     steam_path = get_steam_path()
     if not steam_path:
@@ -375,7 +348,6 @@ def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
     is_64bit = is_64bit_exe(exe_path)
     print(f"Architecture: {'64-bit' if is_64bit else '32-bit'}")
 
-    steam_exe = os.path.join(steam_path, "steam.exe")
     launch_uri = f"steam://rungameid/{appid}"
 
     standard_dlls = get_standard_dlls(is_64bit)
@@ -416,25 +388,12 @@ def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
         injector_python = helper
         print(f"32-bit target -> delegating injection to: {helper}")
 
-    # Launch Steam directly with these two flags ahead of the steam://
-    # URI, instead of going through the shell's steam:// protocol handler
-    # (which can't pass flags through to steam.exe at all). The flags
-    # disable Steam's embedded CEF browser; they came from a forum tip
-    # picked up while chasing the D3D9 problem. The actual D3D9 fix turned
-    # out to be DLL load order (see get_standard_dlls) and a controlled
-    # run without the flags works too. Default is therefore the plain
-    # steam:// URI through the shell handler; --steam-flags (or the
-    # Tridef3D_Play_steamflags build) is kept as a backup that launches
-    # steam.exe directly with the flags, exactly as every earlier verified
-    # run did.
-    if steam_flags:
-        launch_cmd = [steam_exe, "-no-browser", "-no-cef-sandbox", launch_uri]
-        launch_uri_for_shell = None
-        print(f"Launch: {' '.join(launch_cmd)}")
-    else:
-        launch_cmd = None
-        launch_uri_for_shell = launch_uri
-        print(f"Launch: start {launch_uri}")
+    # Plain steam:// URI through the shell handler. (Earlier versions could
+    # also launch steam.exe with -no-browser -no-cef-sandbox, a forum tip that
+    # looked like the DirectX 9 fix for a while; the real fix was DLL load
+    # order - see get_standard_dlls - and the flags made no difference, so
+    # that variant was removed.)
+    print(f"Launch: start {launch_uri}")
 
     if dry_run:
         print("(dry run - not actually launching)")
@@ -443,10 +402,9 @@ def play3d(game_name, dry_run=False, steam_flags=True, sr=False):
     # Long timeout on purpose: games with a pre-game configuration/launcher
     # window (Binary Domain) don't start the real exe until the user clicks
     # Start in it, and that can take a while.
-    pid = injector.poll_launch_and_inject(image_name, launch_uri_for_shell, standard_dlls,
+    pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls,
                                            timeout_s=180,
-                                           injector_python=injector_python,
-                                           launch_cmd=launch_cmd)
+                                           injector_python=injector_python)
     if pid:
         print(f"\nSUCCESS: {game_name} running as PID {pid} with TriDef 3D injected.")
         return True
@@ -554,15 +512,11 @@ def prompt_for_game_name():
     return choice  # allow typing a name not in the list too
 
 
-def main(default_steam_flags=False, default_sr=False):
+def main(default_sr=False):
     dry_run = '--dry-run' in sys.argv
-    if '--steam-flags' in sys.argv:
-        steam_flags = True
-    elif '--no-steam-flags' in sys.argv:
-        steam_flags = False
-    else:
-        steam_flags = default_steam_flags
     sr = default_sr or '--sr' in sys.argv
+    # --steam-flags / --no-steam-flags were options of a removed variant; still
+    # swallowed so old shortcuts and scripts that pass them keep working.
     positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr')]
 
     if positional:
@@ -574,7 +528,7 @@ def main(default_steam_flags=False, default_sr=False):
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
         sys.exit(1)
 
-    ok = play3d(game_name, dry_run=dry_run, steam_flags=steam_flags, sr=sr)
+    ok = play3d(game_name, dry_run=dry_run, sr=sr)
     if ok and not dry_run:
         save_last_used(game_name)
     sys.exit(0 if ok else 1)
