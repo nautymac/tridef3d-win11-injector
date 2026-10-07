@@ -35,25 +35,30 @@ no Direct3D in it, and told you so. Details in
    actually launch it from there — in fact, don't; that's the pop-up).
    Ignition doesn't need to be running afterwards; the tool works with it
    open or closed.
-3. Run `Tridef3D_Play.exe` (as Administrator) — from
-   [Releases](../../releases), no Python required.
+3. Run `Tridef3D_Play.exe` — from [Releases](../../releases), no Python
+   required.
 
-```
-Tridef3D_Play.exe
-```
-
-With no arguments it lists every Steam game you've registered in TriDef 3D
+A window opens (no console): the Steam games you've registered in TriDef 3D
 Ignition, with the one you most recently launched (or last clicked in
-Ignition) as the default — pick a number, or just press Enter. Or name the
-game directly:
+Ignition) at the top. Pick one and press **Launch in 3D** (or double-click,
+or Enter). What happens next is shown in the log pane at the bottom, and
+also written to `launcher.log` next to the exe. The UI is Korean when
+Windows' display language is Korean, English otherwise; force it with
+`--lang ko` or `--lang en`.
+
+Name the game on the command line to skip the list and launch right away:
 
 ```
 Tridef3D_Play.exe "Left 4 Dead"
 ```
 
+`--console` gives the old terminal flow instead (numbered list, plain
+output) for scripting; `--dry-run` shows what would be injected without
+launching anything.
+
 `Tridef3D_Play.exe` is a single self-contained executable — put it anywhere
-and run it, nothing to install. `Tridef3D_Play.bat` is just a
-double-click-friendly wrapper. Works identically for 32-bit or 64-bit games
+and run it, nothing to install. (`Tridef3D_Play.bat` is a leftover wrapper
+from the console days; double-clicking the exe is all you need now.) Works identically for 32-bit or 64-bit games
 — the right DLL set is picked automatically. The only extra file is
 `Inject32.exe`, which must sit in the same folder **for 32-bit games only**
 (see [How it works](#how-it-works)).
@@ -237,8 +242,10 @@ the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
 ## Running from source
 
 ```
-python play3d.py "Left 4 Dead"
-python play3d.py "Left 4 Dead" --dry-run   # show what it would do, don't launch
+python play3d.py                             # the window
+python play3d.py "Left 4 Dead"               # window, launches right away
+python play3d.py "Left 4 Dead" --console     # terminal flow, no window
+python play3d.py "Left 4 Dead" --dry-run     # show what it would do, don't launch
 ```
 
 For 32-bit games this still needs `Inject32.exe` next to `play3d.py` (grab

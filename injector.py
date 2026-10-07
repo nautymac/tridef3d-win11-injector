@@ -502,7 +502,9 @@ def inject_via_external_python(helper_exe, pid, dll_paths):
     else:
         cmd = [helper_exe, str(pid)] + dll_paths
     print(f"  delegating injection to {cmd[0]} (bitness-matched helper)")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    # CREATE_NO_WINDOW: the launcher is a windowed app now, so a console helper would
+    # otherwise flash its own black window for a moment.
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, creationflags=0x08000000)
     print(result.stdout.strip())
     if result.stderr.strip():
         print(result.stderr.strip())
@@ -539,7 +541,8 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
         subprocess.Popen(launch_cmd, shell=False)
         print(f"triggered launch: {launch_cmd}")
     elif launch_uri_or_none:
-        subprocess.Popen(["cmd", "/c", "start", "", launch_uri_or_none], shell=False)
+        import os
+        os.startfile(launch_uri_or_none)   # ShellExecute, no console window involved
         print(f"triggered launch: {launch_uri_or_none}")
 
     # Only a process with the *target* image name counts. Anything else

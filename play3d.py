@@ -513,17 +513,38 @@ def prompt_for_game_name():
 
 
 def main(default_sr=False):
+    """Default is the window (gui.py): game list, launch button, log pane.
+    --console keeps the old terminal flow (numbered list / plain output) for
+    scripting; a game name on the command line pre-selects it and launches
+    right away in either mode."""
     dry_run = '--dry-run' in sys.argv
     sr = default_sr or '--sr' in sys.argv
+    console = '--console' in sys.argv
     # --steam-flags / --no-steam-flags were options of a removed variant; still
     # swallowed so old shortcuts and scripts that pass them keep working.
-    positional = [a for a in sys.argv[1:] if a not in ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr')]
+    flags = ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr', '--console')
+    lang = None
+    args = []
+    it = iter(sys.argv[1:])
+    for a in it:
+        if a == '--lang':
+            lang = next(it, None)
+        elif a.startswith('--lang='):
+            lang = a.split('=', 1)[1]
+        else:
+            args.append(a)
+    positional = [a for a in args if a not in flags]
+    game_name = positional[0] if positional else None
 
-    if positional:
-        game_name = positional[0]
-    else:
+    if not console:
+        import gui
+        gui.run(sr=sr, game=game_name, dry_run=dry_run, lang=lang)   # --lang ko|en, default: Windows UI language
+        return
+
+    if sys.stdout is None:   # windowed build run with --console: nothing to print to
+        sys.exit(2)
+    if not game_name:
         game_name = prompt_for_game_name()
-
     if not game_name:
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
         sys.exit(1)
