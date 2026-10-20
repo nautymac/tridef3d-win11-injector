@@ -120,6 +120,7 @@ bool EnsureWeaver(IDirect3DDevice9* dev, DevState& s)
         s.weaver->setLatencyInFrames((uint64_t)g_cfg.latencyFrames);
         s.weaver->setOutputSRGBWrite(g_cfg.srgb);
     } catch (...) {}
+    LogVpcProbes();
     Log("DX9 weaver created for device %p (hwnd %p)", dev, s.hwnd);
     SrFinishInit();
     SrSetLens(g_cfg.lens && g_cfg.weave);

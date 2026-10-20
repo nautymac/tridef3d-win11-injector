@@ -71,5 +71,6 @@ extern SrCore g_sr;
 bool SrEnsureContext();     // rate-limited create; true when g_sr.ctx is usable
 void SrFinishInit();        // once, after the first weaver exists: lens hint + initialize()
 void SrSetLens(bool on);
+void LogVpcProbes();        // after a weaver is created: notes the 32-bit SR runtime's Virtual PC probe if it was answered
 
 }   // namespace srw

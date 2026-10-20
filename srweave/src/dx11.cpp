@@ -171,6 +171,7 @@ bool EnsureWeaver(IDXGISwapChain* sc, ScState& s)
         s.weaver->setLatencyInFrames((uint64_t)g_cfg.latencyFrames);
         s.weaver->setContext(s.ctx);
     } catch (...) {}
+    LogVpcProbes();
     Log("DX11 weaver created for swapchain %p (hwnd %p)", sc, s.hwnd);
     SrFinishInit();
     SrSetLens(g_cfg.lens && g_cfg.weave);
