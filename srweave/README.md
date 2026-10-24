@@ -1,101 +1,103 @@
-# SRWeave — DX9/DX11 게임 안에서 SR SDK로 직접 위빙
+# SRWeave — weaving with the SR SDK directly inside DX9/DX11 games
 
-이미 좌우(SBS)로 만들어진 게임 화면을 **게임 프로세스 안에서, `Present` 직전에** SR(Simulated Reality / Acer SpatialLabs)
-런타임으로 렌티큘러 위빙한다. SBS를 누가 만들었는지는 상관없다 — TriDef 3D, Geo-11/3DMigoto, ReShade SuperDepth3D 모두 된다.
-화면을 캡처해서 위빙하는 방식([SRCapture3D](https://github.com/nautymac/SRCapture3D))보다 한 프레임 빠르고,
-전체화면 독점 모드도 그대로 된다.
+**English** · [한국어](README.ko.md)
 
-필요한 것: SR/SpatialLabs 런타임이 설치되어 SR Service가 돌고 있는 렌티큘러 3D 패널.
+Takes a game image that is already side-by-side (SBS) and weaves it for a lenticular panel with the SR (Simulated Reality / Acer SpatialLabs)
+runtime, **inside the game process, right before `Present`**. It does not matter what made the SBS image — TriDef 3D, Geo-11/3DMigoto and ReShade SuperDepth3D all work.
+It is one frame faster than capturing the screen and weaving that ([SRCapture3D](https://github.com/nautymac/SRCapture3D)),
+and exclusive fullscreen still works.
 
-| 파일 | 대상 | 후킹 지점 |
+Requirements: a lenticular 3D panel with the SR/SpatialLabs runtime installed and SR Service running.
+
+| File | Target | Hook points |
 |---|---|---|
 | `SRWeaveDX9.dll` (x86/x64) | DirectX 9 | `IDirect3DDevice9::Present` / `Reset`, `IDirect3DSwapChain9::Present` |
 | `SRWeaveDX11.dll` (x86/x64) | DirectX 11 | `IDXGISwapChain::Present` / `Present1` / `ResizeBuffers` |
 
-산출물은 `bin\x64\`, `bin\x86\`. 게임이 32비트면 x86, 64비트면 x64 DLL을 쓴다.
+Build output goes to `bin\x64\` and `bin\x86\`. Use the x86 DLL for a 32-bit game and the x64 DLL for a 64-bit game.
 
-## 쓰는 법
+## How to use
 
-**A. 주입 (기본)** — [tridef3d-win11-injector](https://github.com/nautymac/tridef3d-win11-injector)의
-`Tridef3D_Play_SR.exe`(또는 `Tridef3D_Play.exe --sr`)가 TriDef DLL 다음에 이 DLL을 순서대로 주입한다.
-런처 폴더에 `sr\x86\SRWeaveDX9.dll`, `sr\x64\SRWeaveDX11.dll` 등을 둔다. 32비트 게임 → DX9 DLL, 64비트 → DX11 DLL.
+**A. Injection (default)** — `Tridef3D_Play_SR.exe` (or `Tridef3D_Play.exe --sr`) from [tridef3d-win11-injector](https://github.com/nautymac/tridef3d-win11-injector)
+injects this DLL after the TriDef DLLs, in order.
+Put `sr\x86\SRWeaveDX9.dll`, `sr\x64\SRWeaveDX11.dll` and so on in the launcher folder. 32-bit game → DX9 DLL, 64-bit → DX11 DLL.
 
-**B. 프록시 (파일 복사)** — 게임 폴더에 `SRWeaveDX9.dll`을 `d3d9.dll`로, `SRWeaveDX11.dll`을 `dxgi.dll`(또는 `d3d11.dll`)로
-복사한다. 게임이 로드할 때 System32 원본으로 넘겨주면서 훅을 건다. TriDef 주입은 평소대로.
+**B. Proxy (file copy)** — Copy `SRWeaveDX9.dll` into the game folder as `d3d9.dll`, or `SRWeaveDX11.dll` as `dxgi.dll` (or `d3d11.dll`).
+When the game loads it, it passes calls on to the original in System32 and installs its hooks. Inject TriDef as usual.
 
-## 설정·로그
+## Settings and log
 
-DLL 옆의 `SRWeave.ini` (`[SRWeave]` 섹션), 로그는 같은 폴더의 `SRWeave.log`.
+`SRWeave.ini` next to the DLL (`[SRWeave]` section). The log is `SRWeave.log` in the same folder.
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `weave` | 1 | 위빙 자체 켜고 끄기 |
-| `swap_eyes` | 0 | TriDef가 오른눈\|왼눈 순서로 낼 때 1 |
-| `srgb` | 0 | 백버퍼를 sRGB로 취급 |
-| `test` | 0 | 게임 화면 대신 왼쪽 빨강 / 오른쪽 파랑 (위빙·눈 순서 확인용) |
-| `lens` | 1 | 위빙 중 렌티큘러 렌즈 켜기 |
+| `weave` | 1 | Turns weaving itself on or off |
+| `swap_eyes` | 0 | Set to 1 when TriDef outputs the eyes in right\|left order |
+| `srgb` | 0 | Treat the back buffer as sRGB |
+| `test` | 0 | Left red / right blue instead of the game image (to check weaving and eye order) |
+| `lens` | 1 | Turn the lenticular lens on while weaving |
 | `latency_frames` | 1 | `setLatencyInFrames` |
-| `hook_delay_ms` | 0 | 주입 모드에서 훅을 거는 시점을 늦춘다 |
+| `hook_delay_ms` | 0 | Delays the moment the hooks are installed in injection mode |
 
-단축키(게임 창 포커스): Ctrl+Alt+W 위빙, Ctrl+Alt+S 좌우 바꾸기, Ctrl+Alt+T 테스트 패턴, Ctrl+Alt+L 렌즈.
+Hotkeys (game window focused): Ctrl+Alt+W weaving, Ctrl+Alt+S swap left/right, Ctrl+Alt+T test pattern, Ctrl+Alt+L lens.
 
-## TriDef 밑에 들어가는 방법 (핵심)
+## How it gets underneath TriDef (the key part)
 
-TriDef는 `d3d9.dll` 내부의 디바이스 생성까지 후킹해서 **모든 디바이스를 완전한 래퍼 객체**로 돌려준다(vtable 전체가
-`TriDefD3D9.dll`). 그리고 **진짜 디바이스 객체의 vtable 포인터는 힙 복사본**으로 바꿔 `Present`/`Reset`만 자기 것으로
-패치한다. 그래서:
+TriDef hooks even the device creation inside `d3d9.dll` and returns **every device as a complete wrapper object** (the whole vtable is in
+`TriDefD3D9.dll`). It also replaces **the vtable pointer of the real device object with a heap copy** and patches only `Present`/`Reset` in it
+to point to its own functions. So:
 
-1. 임시 디바이스(래퍼)를 만들고, 그 스왑체인 래퍼의 멤버에서 vtable이 `d3d9.dll` 안에 있는 **진짜 스왑체인**을 찾는다.
-2. 진짜 스왑체인의 `GetDevice()`로 **진짜 디바이스**를 얻는다(vtable은 힙 복사본).
-3. 그 복사본에서 패치되지 않은 항목들을 지문 삼아 디스크의 `d3d9.dll` 원본 이미지에서 원래 vtable을 찾고,
-   거기서 원본 `Present`/`Reset` 주소를 얻는다 (`CleanVtableEntryByFingerprint`).
-4. 그 **진짜 함수를 MinHook 인라인 후킹**한다. TriDef 래퍼가 SBS를 다 그리고 원본을 부르면 그 안에서 우리가 위빙한다.
+1. Create a temporary device (a wrapper). In the members of its swap chain wrapper, find the **real swap chain**, whose vtable is inside `d3d9.dll`.
+2. Get the **real device** with the real swap chain's `GetDevice()` (its vtable is the heap copy).
+3. Use the unpatched entries in that copy as a fingerprint to find the original vtable in the original `d3d9.dll` image on disk,
+   and get the original `Present`/`Reset` addresses from there (`CleanVtableEntryByFingerprint`).
+4. **Inline-hook those real functions with MinHook**. When the TriDef wrapper has finished drawing the SBS image and calls the original, we weave inside that call.
 
-임시 객체는 해제하지 않는다 — TriDef 래퍼를 해제하면 TriDef가 흔들려 게임이 죽었다.
-`IDirect3DDevice9Ex::PresentEx`는 아직 안 건다(Ex 디바이스를 만들면 역시 래핑되고 불안정).
+The temporary objects are not released — releasing the TriDef wrapper destabilized TriDef and the game crashed.
+`IDirect3DDevice9Ex::PresentEx` is not hooked yet (creating an Ex device also gets it wrapped, and that is unstable).
 
-위빙 절차(DX9): 백버퍼 → `StretchRect` → SBS 텍스처, `setInputViewTexture(tex, 폭/2, 높이, 포맷)`,
-상태 블록 캡처 → RT=백버퍼, 깊이 없음, Z 끔 → `BeginScene`/`weave()`/`EndScene` → 상태 복원 → 원래 `Present`.
-`Reset` 전후로 `invalidateDeviceObjects`/`restoreDeviceObjects`.
+Weaving steps (DX9): back buffer → `StretchRect` → SBS texture, `setInputViewTexture(tex, width/2, height, format)`,
+capture a state block → RT = back buffer, no depth, Z off → `BeginScene`/`weave()`/`EndScene` → restore state → original `Present`.
+`invalidateDeviceObjects`/`restoreDeviceObjects` before and after `Reset`.
 
-## 빌드
+## Build
 
 ```
 powershell -ExecutionPolicy Bypass -File setup-deps.ps1 -SrSdkInstaller <win64.exe> -SrSdk32Installer <win32.exe>
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-MSVC(x86·x64 크로스 툴)와 Windows 10 SDK만 있으면 된다. `build.ps1`은 MSVC와 SDK를 직접 찾아 Ninja로 두 아키텍처를
-빌드한다(찾지 못하면 `$env:SRWEAVE_MSVC`, `$env:SRWEAVE_SDK`로 지정). CRT는 정적 링크, SR 런타임 DLL은 지연
-로드(SpatialLabs 설치 폴더에서 찾는다), MinHook(BSD-2)은 `third_party\minhook`에 포함.
+All you need is MSVC (x86 and x64 cross tools) and the Windows 10 SDK. `build.ps1` finds MSVC and the SDK by itself and builds both architectures
+with Ninja (if it can't find them, set `$env:SRWEAVE_MSVC` and `$env:SRWEAVE_SDK`). The CRT is linked statically, the SR runtime DLLs are
+delay-loaded (they are looked up in the SpatialLabs install folder), and MinHook (BSD-2) is included in `third_party\minhook`.
 
-SR SDK는 재배포하지 않는다 — LeiaSR/SpatialLabs 런타임 설치본에서 `setup-deps.ps1`로 풀어 쓴다. x86 DLL을 빌드하려면
-win32 판 SDK도 필요하고, 그것은 win64 설치 파일을 풀면 나오는 `temp\` 폴더 안에 들어 있다.
+The SR SDK is not redistributed — `setup-deps.ps1` unpacks it from a LeiaSR/SpatialLabs runtime installer. To build the x86 DLL
+you also need the win32 SDK. It is inside the `temp\` folder you get when you unpack the win64 installer.
 
-## 검증 (2026-09-23)
+## Verification (2026-09-23)
 
-Left 4 Dead (DX9, 32비트) + TriDef 3D: 진짜 `d3d9.dll` 함수에 훅, SR 컨텍스트·위버 생성, `first weaved frame`,
-게임 내 해상도 변경(`Reset`) 두 번 통과, 게임 생존.
+Left 4 Dead (DX9, 32-bit) + TriDef 3D: hooks on the real `d3d9.dll` functions, SR context and weaver created, `first weaved frame`,
+two in-game resolution changes (`Reset`) passed, the game kept running.
 
-Binary Domain (DX9, 32비트) + TriDef 3D: 임시 디바이스 래퍼의 `GetSwapChain(0)`이 `0x8876086c`(D3DERR_INVALIDCALL)로
-실패해서 처음엔 훅이 하나도 안 걸렸다. 대체 경로 추가 — 스왑체인 대신 **디바이스 래퍼의 멤버에서 진짜 디바이스를 직접 찾는다**
-(`FindInnerBySlots`: vtable 119칸 중 80칸 이상이 `d3d9.dll`을 가리키는 객체, `QueryInterface(IDirect3DDevice9)`로 확인).
-그 힙 vtable로 지문을 떠 원본 `Present`/`Reset`을 찾는다. 결과: 훅 → SR 컨텍스트 → 위버 → `first weaved frame: 3840x2160`,
-패널에서 육안으로 위빙 확인 (2026-09-23). 관리자 권한 없이 `Tridef3D_Play_SR.exe`로 주입해도 된다(게임을 Steam이 일반 권한으로 띄우므로).
+Binary Domain (DX9, 32-bit) + TriDef 3D: `GetSwapChain(0)` on the temporary device wrapper failed with `0x8876086c` (D3DERR_INVALIDCALL),
+so at first not a single hook was installed. A fallback path was added — instead of going through the swap chain, **find the real device directly in the members of the device wrapper**
+(`FindInnerBySlots`: an object where at least 80 of the 119 vtable slots point into `d3d9.dll`, confirmed with `QueryInterface(IDirect3DDevice9)`).
+The fingerprint is taken from that heap vtable to find the original `Present`/`Reset`. Result: hook → SR context → weaver → `first weaved frame: 3840x2160`,
+weaving confirmed by eye on the panel (2026-09-23). Injecting with `Tridef3D_Play_SR.exe` without administrator rights also works (because Steam starts the game with normal rights).
 
-Gone Home (DX11, 64비트) + TriDef 3D: TriDef의 DXGI 계층(`TriDefDXGI64.dll`)도 스왑체인을 완전 래퍼로 돌려줘 처음엔 훅이
-0개였다. DX9 디바이스와 같은 대체 경로(`FindInnerBySlots`로 래퍼의 1번 필드에서 dxgi.dll vtable을 가진 진짜 스왑체인을 찾고
-`QueryInterface(IDXGISwapChain)`으로 확인)로 `Present`/`Present1`/`ResizeBuffers`를 후킹. 결과: 위버 생성 →
-`first weaved frame: 3840x2160`, `ResizeBuffers` 두 번 통과, 게임 생존 (2026-09-23).
-Left 4 Dead는 같은 빌드로 회귀 확인(스왑체인 경로 그대로 동작).
+Gone Home (DX11, 64-bit) + TriDef 3D: TriDef's DXGI layer (`TriDefDXGI64.dll`) also returns the swap chain as a complete wrapper, so at first
+0 hooks were installed. `Present`/`Present1`/`ResizeBuffers` are hooked through the same fallback path as for the DX9 device (`FindInnerBySlots` finds the real swap chain with a dxgi.dll vtable in field 1 of the wrapper,
+confirmed with `QueryInterface(IDXGISwapChain)`). Result: weaver created →
+`first weaved frame: 3840x2160`, two `ResizeBuffers` calls passed, the game kept running (2026-09-23).
+Left 4 Dead was rechecked for regressions with the same build (the swap chain path still works).
 
-## 라이선스
+## License
 
-MIT — 저장소 루트의 `LICENSE`. 포함된 [MinHook](https://github.com/TsudaKageyu/minhook)은 BSD-2
-(`third_party\minhook\LICENSE.txt`). SR SDK와 런타임은 포함하지 않는다 — Leia/Acer 것이다.
+MIT — `LICENSE` at the repository root. The included [MinHook](https://github.com/TsudaKageyu/minhook) is BSD-2
+(`third_party\minhook\LICENSE.txt`). The SR SDK and runtime are not included — they belong to Leia/Acer.
 
-## 이 폴더의 위치
+## Where this folder lives
 
-원래 [SRCapture3D](https://github.com/nautymac/SRCapture3D) 의 `weave\` 였고, 2026-09-27에 이 저장소
-(`tridef3d-win11-injector`)의 `srweave\` 로 옮겨 왔다 — `--sr` 로 이 DLL을 주입하는 런처와 늘 같이 쓰이기 때문이다.
-히스토리는 그대로 남아 있다.
+It was originally `weave\` in [SRCapture3D](https://github.com/nautymac/SRCapture3D), and on 2026-09-27 it moved to `srweave\` in this repository
+(`tridef3d-win11-injector`) — because it is always used together with the launcher that injects this DLL with `--sr`.
+The history is preserved.
