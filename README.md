@@ -38,8 +38,9 @@ no Direct3D in it, and told you so. Details in
 3. Run `Tridef3D_Play.exe` — from [Releases](../../releases), no Python
    required.
 
-A window opens (no console): the Steam games you've registered in TriDef 3D
-Ignition, with the one you most recently launched (or last clicked in
+A window opens (no console): the games you've registered in TriDef 3D
+Ignition - Steam games and games registered by their exe (GOG, EA app, Epic,
+disc installs) - with the one you most recently launched (or last clicked in
 Ignition) at the top. Pick one and press **Launch in 3D** (or double-click,
 or Enter). What happens next is shown in the log pane at the bottom, and
 also written to `launcher.log` next to the exe. The UI is Korean when
@@ -54,7 +55,10 @@ Tridef3D_Play.exe "Left 4 Dead"
 
 `--console` gives the old terminal flow instead (numbered list, plain
 output) for scripting; `--dry-run` shows what would be injected without
-launching anything.
+launching anything. The released exe is a windowed program with no terminal:
+there, `--console` together with a game name runs it with no window at all
+and writes the output to `launcher.log` next to the exe. That is how another
+program starts a game through it (Geo Gaming Hub does).
 
 `Tridef3D_Play.exe` is a single self-contained executable — put it anywhere
 and run it, nothing to install. (`Tridef3D_Play.bat` is a leftover wrapper
@@ -125,6 +129,18 @@ through this tool.
   opened via the shell handler. That's what makes Steamworks games
   initialize normally instead of detecting "not launched by Steam" and
   silently relaunching themselves.
+- **Games that are not Steam games are started from their exe.** A game
+  registered in Ignition by its exe, with that exe outside every Steam
+  library, has no `steam://` to go through: the exe is started directly, in
+  its own folder (or the registration's `Dir`), with the registration's
+  `Argument`. If the game belongs to another store, the exe is often only a
+  stub that hands over to that store's launcher (EA app, Epic Games
+  Launcher, Ubisoft Connect) and exits; the launcher then starts the real
+  game as a new process with the same name. The tool keeps watching for 90
+  seconds and injects that process too, and stops watching once an injected
+  process has stayed up for 15 seconds. Run without administrator rights the
+  game starts with normal rights, which is what you want; an exe that itself
+  demands elevation needs the tool started as administrator.
 - **Poll for the new process at native speed** (a tight loop over
   `CreateToolhelp32Snapshot`) and inject the instant it appears. No
   thread suspension is used: freezing a brand-new process's only thread
@@ -221,7 +237,10 @@ from [`srweave\`](srweave/) in this repo (`srweave\build.ps1`; the launcher
 also accepts it at `srweave\bin\<arch>\`) and weaves TriDef's side-by-side
 output for a lenticular SR panel inside the game process, right before `Present` - no capture, no extra
 frame of latency, exclusive fullscreen works. Needs the SR / SpatialLabs
-runtime installed (the 32-bit runtime too for 32-bit games). Hotkeys in
+runtime installed (the 32-bit runtime too for 32-bit games). A DirectX 9
+game running below the panel's resolution is weaved at the panel's resolution
+(`upscale`, on by default - see [`srweave\README.md`](srweave/README.md)), so
+an old game need not be run at 4K with a tiny interface. Hotkeys in
 the game: Ctrl+Alt+W weave on/off, Ctrl+Alt+S swap eyes, Ctrl+Alt+T
 red/blue test pattern, Ctrl+Alt+L lens. Log and `SRWeave.ini` sit next to
 the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
@@ -234,8 +253,11 @@ the DLL. Confirmed on Left 4 Dead, Binary Domain (DX9) and Gone Home (DX11).
 - The target game added once in TriDef 3D Ignition's own UI (so it's
   registered under `HKCU\SOFTWARE\DDD\TriDefIgnition\Games\<name>`) —
   you never need to launch it *from* Ignition, just add it there once
-- Steam, with the game installed
-- Administrator privileges (required for cross-process injection)
+- For a Steam game: Steam, with the game installed. Other games only need
+  to be registered in Ignition by their exe
+- Administrator privileges only when the game itself runs elevated
+  (injection needs the same rights as the game; a game started by Steam or
+  from its exe runs with normal rights)
 - Python 3.9+ if running from source; no Python needed if using the
   prebuilt `Tridef3D_Play.exe` from [Releases](../../releases)
 

@@ -511,8 +511,63 @@ def inject_via_external_python(helper_exe, pid, dll_paths):
     return result.returncode == 0
 
 
+def _inject_into(pid, dll_paths, injector_python, suspend_first):
+    handles = suspend_all_threads(pid) if suspend_first else []
+    if suspend_first:
+        print(f"  suspended {len(handles)} thread(s)")
+
+    if injector_python:
+        inject_via_external_python(injector_python, pid, dll_paths)
+    else:
+        access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
+        hProcess = kernel32.OpenProcess(access, False, pid)
+        if hProcess:
+            for dll in dll_paths:
+                inject_one(hProcess, dll)
+            kernel32.CloseHandle(hProcess)
+        else:
+            print(f"OpenProcess({pid}) failed err={ctypes.get_last_error()}")
+
+    if suspend_first:
+        resume_threads(handles)
+
+
+def _follow_relaunch(image_name, baseline, first_pid, dll_paths, injector_python, suspend_first,
+                     follow_s, settle_s=15.0, poll_s=0.003):
+    """After the first injection: if the game exits and comes back as a new
+    process (a store launcher relaunching it), inject that one too. Returns
+    the pid of the last process injected. Stops once an injected process has
+    been up for settle_s, or follow_s after the last injection."""
+    import time
+    injected = {first_pid}
+    pid = first_pid
+    t_last = time.time()
+    told = False
+    while time.time() - t_last < follow_s:
+        time.sleep(poll_s)
+        current = get_pids_by_name(image_name)
+        new_pids = current - injected - baseline
+        if new_pids:
+            pid = sorted(new_pids)[0]
+            print(f"RELAUNCHED as PID {pid} ({time.time()-t_last:.1f}s after the previous one) - injecting again")
+            t_found = time.time()
+            _inject_into(pid, dll_paths, injector_python, suspend_first)
+            print(f"done, {time.time()-t_found:.4f}s after detection")
+            injected.add(pid)
+            t_last = time.time()
+            told = False
+        elif pid in current:
+            if time.time() - t_last >= settle_s:
+                break                      # still running: this is the game
+        elif not told:
+            print(f"  PID {pid} exited - waiting up to {follow_s:.0f}s in case its launcher starts the game again")
+            told = True
+    return pid
+
+
 def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=20, poll_s=0.001,
-                            suspend_first=False, injector_python=None, launch_cmd=None):
+                            suspend_first=False, injector_python=None, launch_cmd=None,
+                            launch_cwd=None, follow_relaunch_s=0):
     """Poll for a NEW process named image_name appearing and inject into it
     as fast as possible, racing to beat its own D3D device/resource
     creation. If launch_uri_or_none is given, it is triggered via
@@ -520,7 +575,15 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
     instead (a full argv list), it's run directly via subprocess.Popen -
     used to launch steam.exe itself with extra flags (see play3d.py) rather
     than going through the shell's steam:// URI handler, which can't pass
-    flags through to steam.exe.
+    flags through to steam.exe - and to start a game that is not a Steam
+    game straight from its exe (launch_cwd is its working directory).
+
+    follow_relaunch_s > 0: after the first injection keep watching for that
+    long. A game started from its exe may only be a stub that hands over to
+    its store's launcher (EA app, Epic Games Launcher, Ubisoft Connect ...)
+    and exits; the launcher then starts the real game as a new process with
+    the same image name. That process is injected too. Watching stops early
+    once an injected process has stayed up for a while.
 
     suspend_first=True freezes every thread before injecting, which sounds
     safer but usually deadlocks: LoadLibraryW needs the process's loader
@@ -533,13 +596,23 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
     baseline = get_pids_by_name(image_name)
     if baseline:
         print(f"WARNING: {image_name} is already running (PID {', '.join(map(str, sorted(baseline)))}). "
-              f"Steam won't start a second copy - close the running game first, then retry.")
+              f"A second copy won't start - close the running game first, then retry.")
         return None
     print(f"baseline {image_name} pids (ignored): {baseline}")
 
     if launch_cmd:
-        subprocess.Popen(launch_cmd, shell=False)
-        print(f"triggered launch: {launch_cmd}")
+        try:
+            subprocess.Popen(launch_cmd, shell=False, cwd=launch_cwd)
+        except OSError as e:
+            if getattr(e, 'winerror', None) == 740:
+                # the exe asks for elevation in its manifest; an injector that is not elevated
+                # could not open the elevated game anyway
+                print(f"ERROR: {image_name} needs administrator rights to start. "
+                      f"Run this launcher as administrator and try again.")
+            else:
+                print(f"ERROR: could not start {launch_cmd}: {e}")
+            return None
+        print(f"triggered launch: {launch_cmd}" + (f" (in {launch_cwd})" if launch_cwd else ""))
     elif launch_uri_or_none:
         import os
         os.startfile(launch_uri_or_none)   # ShellExecute, no console window involved
@@ -565,25 +638,11 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
             t_found = time.time()
             print(f"NEW PID {pid} detected after {t_found-start:.4f}s")
 
-            handles = suspend_all_threads(pid) if suspend_first else []
-            if suspend_first:
-                print(f"  suspended {len(handles)} thread(s)")
-
-            if injector_python:
-                inject_via_external_python(injector_python, pid, dll_paths)
-            else:
-                access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
-                hProcess = kernel32.OpenProcess(access, False, pid)
-                if hProcess:
-                    for dll in dll_paths:
-                        inject_one(hProcess, dll)
-                    kernel32.CloseHandle(hProcess)
-                else:
-                    print(f"OpenProcess({pid}) failed err={ctypes.get_last_error()}")
-
-            if suspend_first:
-                resume_threads(handles)
+            _inject_into(pid, dll_paths, injector_python, suspend_first)
             print(f"done, {time.time()-t_found:.4f}s after detection")
+            if follow_relaunch_s > 0:
+                pid = _follow_relaunch(image_name, baseline, pid, dll_paths, injector_python,
+                                       suspend_first, follow_relaunch_s)
             return pid
         time.sleep(poll_s)
 

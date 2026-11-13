@@ -5,7 +5,11 @@ Usage:
     python play3d.py "Gone Home"
     python play3d.py "Gone Home" --dry-run     (just show what it would do)
 
-What it does automatically:
+Games that are not Steam games (registered in Ignition by their exe, outside
+any Steam library: GOG, EA app, Epic, disc installs ...) are started straight
+from that exe and injected the same way; see play3d().
+
+What it does automatically for a Steam game:
     1. Reads HKCU\\SOFTWARE\\DDD\\TriDefIgnition\\Games\\<name> to get the
        steam://rungameid/<appid> the game was registered with in TriDef
        Ignition.
@@ -177,7 +181,19 @@ def find_appid_by_installdir(steam_path, installdir_name):
     return None
 
 
+def steam_installdir_of(exe_path):
+    """'<library>\\steamapps\\common\\<installdir>\\...\\game.exe' -> '<installdir>';
+    None when the exe is not inside a Steam library. Works for an exe in a
+    subfolder of the install dir too (bin\\game.exe)."""
+    m = re.search(r'[\\/]steamapps[\\/]common[\\/]([^\\/]+)[\\/]', exe_path or "", re.IGNORECASE)
+    return m.group(1) if m else None
+
+
 def get_tridef_game_appid(game_name):
+    """The Steam appid the game is launched with, or None when it is not a
+    Steam game - registered by its exe, and that exe is outside every Steam
+    library (or inside one that has no manifest for it). play3d() starts
+    those directly."""
     key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
         argument = winreg.QueryValueEx(k, "Argument")[0]
@@ -197,17 +213,30 @@ def get_tridef_game_appid(game_name):
             exe_path = None
     if not exe_path:
         raise ValueError(f"no rungameid in Argument={argument!r} and no Path to fall back to")
-    installdir_name = os.path.basename(os.path.dirname(exe_path))
+    installdir_name = steam_installdir_of(exe_path)
+    if not installdir_name:
+        return None
     steam_path = get_steam_path()
-    if not steam_path:
-        raise ValueError("could not find Steam install path for installdir fallback")
-    appid = find_appid_by_installdir(steam_path, installdir_name)
+    appid = find_appid_by_installdir(steam_path, installdir_name) if steam_path else None
     if not appid:
-        raise ValueError(
-            f"couldn't find a steam appid for {game_name!r}: no rungameid in "
-            f"Argument={argument!r}, and no appmanifest matches installdir "
-            f"{installdir_name!r} (from Path={exe_path!r})")
+        print(f"(no Steam appmanifest for installdir {installdir_name!r} - treating {game_name!r} as a non-Steam game)")
     return appid
+
+
+def get_registered_entry(game_name):
+    """Path / Argument / Dir of the game's Ignition registration ('' where absent)."""
+    entry = {"Path": "", "Argument": "", "Dir": ""}
+    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+            for name in entry:
+                try:
+                    entry[name] = winreg.QueryValueEx(k, name)[0] or ""
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return entry
 
 
 def get_registered_exe(game_name):
@@ -296,17 +325,14 @@ def guess_main_exe(install_dir):
     return candidates[0]
 
 
-def play3d(game_name, dry_run=False, sr=False):
-    print(f"=== TriDef 3D launch: {game_name} ===")
-
-    appid = get_tridef_game_appid(game_name)
-    print(f"Steam AppID: {appid}")
-    set_ignition_last_game(game_name)
-
+def find_steam_game_exe(game_name, appid):
+    """The exe Steam will start for this appid: Ignition's own record when it
+    has one, else the best guess from the install folder. None (after
+    printing why) when it can't be worked out."""
     steam_path = get_steam_path()
     if not steam_path:
         print("ERROR: could not find Steam install path")
-        return False
+        return None
     print(f"Steam path: {steam_path}")
 
     lib_path = find_library_folder_for_app(steam_path, appid)
@@ -327,7 +353,7 @@ def play3d(game_name, dry_run=False, sr=False):
                 time.sleep(0.3)
     if not installdir_name:
         print(f"ERROR: could not read installdir from {manifest_path}")
-        return False
+        return None
 
     install_dir = os.path.join(lib_path, "steamapps", "common", installdir_name)
     print(f"Install dir: {install_dir}")
@@ -341,14 +367,46 @@ def play3d(game_name, dry_run=False, sr=False):
         exe_path = guess_main_exe(install_dir)
         if not exe_path:
             print(f"ERROR: no .exe found in {install_dir}")
-            return False
+            return None
         print(f"Detected main exe: {os.path.basename(exe_path)}")
+    return exe_path
+
+
+def play3d(game_name, dry_run=False, sr=False):
+    print(f"=== TriDef 3D launch: {game_name} ===")
+
+    appid = get_tridef_game_appid(game_name)
+    set_ignition_last_game(game_name)
+
+    launch_uri = launch_cmd = launch_cwd = None
+    follow_relaunch_s = 0
+    if appid:
+        print(f"Steam AppID: {appid}")
+        exe_path = find_steam_game_exe(game_name, appid)
+        if not exe_path:
+            return False
+        launch_uri = f"steam://rungameid/{appid}"
+    else:
+        # Not a Steam game: there is no steam:// to go through, so start the
+        # exe Ignition has on record, in its own folder. If it belongs to
+        # another store (EA app, Epic ...) it may hand over to that launcher
+        # and come back as a new process - the injector follows that.
+        exe_path = get_registered_exe(game_name)
+        if not exe_path:
+            entry = get_registered_entry(game_name)
+            print(f"ERROR: {game_name!r} is not a Steam game and its registration has no usable exe "
+                  f"(Path={entry['Path']!r}). Register the game by its exe.")
+            return False
+        entry = get_registered_entry(game_name)
+        print(f"Not a Steam game - starting the exe directly: {exe_path}")
+        launch_cwd = entry["Dir"] if entry["Dir"] and os.path.isdir(entry["Dir"]) else os.path.dirname(exe_path)
+        args = entry["Argument"].strip()
+        launch_cmd = f'"{exe_path}" {args}' if args else [exe_path]
+        follow_relaunch_s = 90
     image_name = os.path.basename(exe_path)
 
     is_64bit = is_64bit_exe(exe_path)
     print(f"Architecture: {'64-bit' if is_64bit else '32-bit'}")
-
-    launch_uri = f"steam://rungameid/{appid}"
 
     standard_dlls = get_standard_dlls(is_64bit)
     if sr:
@@ -388,12 +446,15 @@ def play3d(game_name, dry_run=False, sr=False):
         injector_python = helper
         print(f"32-bit target -> delegating injection to: {helper}")
 
-    # Plain steam:// URI through the shell handler. (Earlier versions could
-    # also launch steam.exe with -no-browser -no-cef-sandbox, a forum tip that
-    # looked like the DirectX 9 fix for a while; the real fix was DLL load
-    # order - see get_standard_dlls - and the flags made no difference, so
-    # that variant was removed.)
-    print(f"Launch: start {launch_uri}")
+    # Steam games: plain steam:// URI through the shell handler. (Earlier
+    # versions could also launch steam.exe with -no-browser -no-cef-sandbox, a
+    # forum tip that looked like the DirectX 9 fix for a while; the real fix
+    # was DLL load order - see get_standard_dlls - and the flags made no
+    # difference, so that variant was removed.)
+    if launch_uri:
+        print(f"Launch: start {launch_uri}")
+    else:
+        print(f"Launch: {launch_cmd if isinstance(launch_cmd, str) else launch_cmd[0]} (in {launch_cwd})")
 
     if dry_run:
         print("(dry run - not actually launching)")
@@ -404,7 +465,9 @@ def play3d(game_name, dry_run=False, sr=False):
     # Start in it, and that can take a while.
     pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls,
                                            timeout_s=180,
-                                           injector_python=injector_python)
+                                           injector_python=injector_python,
+                                           launch_cmd=launch_cmd, launch_cwd=launch_cwd,
+                                           follow_relaunch_s=follow_relaunch_s)
     if pid:
         print(f"\nSUCCESS: {game_name} running as PID {pid} with TriDef 3D injected.")
         return True
@@ -417,12 +480,11 @@ LAST_USED_PATH = os.path.join(get_app_dir(), "last_game.txt")
 
 
 def list_registered_games():
-    """Every game TriDef 3D Ignition knows about (HKCU\\...\\Games\\<name>),
-    filtered to ones that look like Steam games - either a rungameid
-    Argument, or (some Ignition profiles only record this) a Path that
-    lands under a Steam library's steamapps\\common - so we don't list
-    stale/non-Steam entries we can't launch. get_tridef_game_appid()
-    handles resolving the appid for either case."""
+    """Every game TriDef 3D Ignition knows about (HKCU\\...\\Games\\<name>)
+    that can be launched: a Steam game (a rungameid Argument, or a Path
+    under a Steam library's steamapps\\common), or any other game whose
+    registered exe exists (started directly). Stale entries - an exe that
+    is gone - are left out."""
     games = []
     key_path = r"SOFTWARE\DDD\TriDefIgnition\Games"
     try:
@@ -448,7 +510,9 @@ def list_registered_games():
                             path = winreg.QueryValueEx(gk, "Path")[0]
                         except FileNotFoundError:
                             pass
-                    if "rungameid" in argument or "steamapps" in path.lower():
+                    if ("rungameid" in argument or "steamapps" in path.lower()
+                            or (path.lower().endswith(".exe") and os.path.basename(path).lower() != "steam.exe"
+                                and os.path.exists(path))):
                         games.append(name)
                 except OSError:
                     continue
@@ -541,15 +605,33 @@ def main(default_sr=False):
         gui.run(sr=sr, game=game_name, dry_run=dry_run, lang=lang)   # --lang ko|en, default: Windows UI language
         return
 
-    if sys.stdout is None:   # windowed build run with --console: nothing to print to
-        sys.exit(2)
+    headless = sys.stdout is None
+    if headless:
+        # Windowed build run with --console: there is no terminal. Run without any window
+        # (this is how another program - Geo Gaming Hub - starts a game through us) and put
+        # what would have been printed into launcher.log next to the exe.
+        try:
+            log = open(os.path.join(get_app_dir(), "launcher.log"), "w", encoding="utf-8", buffering=1)
+        except OSError:
+            log = open(os.devnull, "w")
+        sys.stdout = sys.stderr = log
+        if not game_name:
+            print("--console without a terminal needs a game name")
+            sys.exit(2)
     if not game_name:
         game_name = prompt_for_game_name()
     if not game_name:
         print('게임 이름이 필요합니다. 예: python play3d.py "Gone Home"')
         sys.exit(1)
 
-    ok = play3d(game_name, dry_run=dry_run, sr=sr)
+    try:
+        ok = play3d(game_name, dry_run=dry_run, sr=sr)
+    except Exception:
+        if not headless:
+            raise
+        import traceback
+        print(traceback.format_exc())
+        ok = False
     if ok and not dry_run:
         save_last_used(game_name)
     sys.exit(0 if ok else 1)
