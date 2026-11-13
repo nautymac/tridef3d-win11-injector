@@ -52,6 +52,13 @@ void Init(HMODULE self, const char* product)
     g_cfg.log = b(L"log", true);
     g_cfg.latencyFrames = (int)GetPrivateProfileIntW(L"SRWeave", L"latency_frames", 1, ini.c_str());
     g_cfg.hookDelayMs = (int)GetPrivateProfileIntW(L"SRWeave", L"hook_delay_ms", 0, ini.c_str());
+    g_cfg.upscale = b(L"upscale", true);
+    wchar_t um[16] = {};
+    GetPrivateProfileStringW(L"SRWeave", L"upscale_mouse", L"auto", um, 16, ini.c_str());
+    g_cfg.upscaleMouse = (_wcsicmp(um, L"auto") == 0) ? -1 : _wtoi(um);
+    g_cfg.upscaleDpi = b(L"upscale_dpi", true);
+    g_cfg.upscaleVsync = (int)GetPrivateProfileIntW(L"SRWeave", L"upscale_vsync", 1, ini.c_str());
+    g_cfg.diagInput = b(L"diag_input", false);
     if (g_cfg.log) {
         std::wstring lp = SelfDir() + L"\\SRWeave.log";
         g_logFile = _wfopen(lp.c_str(), L"a");
@@ -59,8 +66,36 @@ void Init(HMODULE self, const char* product)
     wchar_t exe[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     Log("=== %s (%s) loaded as %ls into %ls (pid %lu) ===", product, SRW_ARCH, SelfFileName().c_str(), exe, GetCurrentProcessId());
-    Log("config: weave=%d swap_eyes=%d srgb=%d test=%d lens=%d latency_frames=%d hook_delay_ms=%d",
-        g_cfg.weave, g_cfg.swapEyes, g_cfg.srgb, g_cfg.test, g_cfg.lens, g_cfg.latencyFrames, g_cfg.hookDelayMs);
+    Log("config: weave=%d swap_eyes=%d srgb=%d test=%d lens=%d latency_frames=%d hook_delay_ms=%d upscale=%d upscale_mouse=%d upscale_vsync=%d diag_input=%d",
+        g_cfg.weave, g_cfg.swapEyes, g_cfg.srgb, g_cfg.test, g_cfg.lens, g_cfg.latencyFrames, g_cfg.hookDelayMs, g_cfg.upscale,
+        g_cfg.upscaleMouse, g_cfg.upscaleVsync, g_cfg.diagInput);
+}
+
+// The upscale path presents a panel-sized swap chain to the game window. If Windows treats the
+// process as DPI-unaware (most old games), it stretches that window's picture by the display
+// scale and the weave no longer lands on the panel's pixels - so ask for real pixels, the same
+// thing the "override high DPI scaling: Application" compatibility setting does. We are loaded
+// at process start, before the game has a window; if it is too late or already decided, the call
+// just fails and dx9.cpp leaves a virtualized window alone.
+void MakeDpiAware()
+{
+    HMODULE u32 = GetModuleHandleW(L"user32.dll");
+    if (!u32) return;
+    auto getCtx = (HANDLE(WINAPI*)(void))GetProcAddress(u32, "GetThreadDpiAwarenessContext");
+    auto getAw = (int(WINAPI*)(HANDLE))GetProcAddress(u32, "GetAwarenessFromDpiAwarenessContext");
+    auto isAware = (BOOL(WINAPI*)(void))GetProcAddress(u32, "IsProcessDPIAware");
+    auto state = [&]() -> int {   // 0 unaware, 1 system, 2 per-monitor
+        if (getCtx && getAw) return getAw(getCtx());
+        return (isAware && isAware()) ? 1 : 0;
+    };
+    static const char* const names[] = { "unaware", "system", "per-monitor" };
+    const int before = state();
+    if (before > 0) { Log("DPI awareness: %s already", names[before > 2 ? 2 : before]); return; }
+    auto ctx = (BOOL(WINAPI*)(HANDLE))GetProcAddress(u32, "SetProcessDpiAwarenessContext");
+    auto old = (BOOL(WINAPI*)(void))GetProcAddress(u32, "SetProcessDPIAware");
+    if (!(ctx && ctx((HANDLE)(LONG_PTR)-4)) && !(ctx && ctx((HANDLE)(LONG_PTR)-3)) && old) old();   // per-monitor v2, per-monitor, system
+    const int after = state();
+    Log("DPI awareness: was unaware, now %s", names[after < 0 ? 0 : after > 2 ? 2 : after]);
 }
 
 void Log(const char* fmt, ...)

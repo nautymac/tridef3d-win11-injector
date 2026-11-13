@@ -38,6 +38,11 @@ When the game loads it, it passes calls on to the original in System32 and insta
 | `lens` | 1 | Turn the lenticular lens on while weaving |
 | `latency_frames` | 1 | `setLatencyInFrames` |
 | `hook_delay_ms` | 0 | Delays the moment the hooks are installed in injection mode |
+| `upscale` | 1 | DX9 only. A game running below the panel's resolution is weaved at the panel's resolution: the device is made windowed underneath the game (which still sees fullscreen at its own resolution), the window is made borderless over the monitor, and each frame is weaved into an additional swap chain of the monitor's size. Without it a 1440p game on a 4K panel is weaved at 1440p and stretched by the display, which breaks the lens pattern. Does nothing when the game already runs at the panel's resolution. The process is made DPI-aware at load for this; if Windows still DPI-virtualizes the game window, the frame is left alone and the log says so. `0` = off. |
+| `upscale_mouse` | auto | With `upscale`: what is scaled back to the game's resolution. `auto` = nothing under TriDef 3D (the game clips the cursor to its own resolution and the pointer is drawn into the picture, so the cursor is in the game's coordinates already; scaling it again breaks clicks), window messages + cursor API otherwise. `0` nothing, `1` messages, `2` cursor API, `3` both. The non-TriDef path is untested. |
+| `upscale_dpi` | 1 | With `upscale`: make the process DPI-aware at load if it is not (most old games are not). Windows otherwise stretches the game window's picture by the display scale and the weave misses the panel's pixels. `0` = leave it; a DPI-virtualized game is then not upscaled. |
+| `upscale_vsync` | 1 | With `upscale`: `1` present on the vertical blank, `0` at once, `-1` whatever the game's swap chain has. The windowed device underneath otherwise runs unthrottled (hundreds of fps). |
+| `diag_input` | 0 | With `upscale`: log how the game reads the mouse and its window size, and the frame brightness while the left button is held. |
 
 Hotkeys (game window focused): Ctrl+Alt+W weaving, Ctrl+Alt+S swap left/right, Ctrl+Alt+T test pattern, Ctrl+Alt+L lens.
 

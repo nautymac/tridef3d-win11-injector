@@ -17,6 +17,12 @@ struct Config {
     bool log = true;
     int latencyFrames = 1;   // IWeaverBase1::setLatencyInFrames
     int hookDelayMs = 0;     // injected mode: wait before installing the hooks
+    bool upscale = true;     // DX9: a game running below the panel's resolution is weaved at the panel's (see dx9.cpp)
+    int upscaleMouse = -1;   // upscale: what is scaled back to the game's resolution - 1 = mouse messages, 2 = cursor API, 3 = both,
+                             // 0 = nothing, -1 (auto) = nothing under TriDef 3D, both otherwise
+    bool upscaleDpi = true;  // upscale: ask Windows for real pixels at load (MakeDpiAware)
+    int upscaleVsync = 1;    // upscale: 1 = present on the vertical blank, 0 = at once, -1 = what the game's swap chain has
+    bool diagInput = false;  // upscale: log how the game reads the mouse and its window size
 };
 extern Config g_cfg;
 extern HMODULE g_self;
@@ -24,6 +30,7 @@ extern HMODULE g_self;
 // Reads SRWeave.ini next to the DLL, opens SRWeave.log there. `product` names the DLL in the log.
 void Init(HMODULE self, const char* product);
 void Log(const char* fmt, ...);
+void MakeDpiAware();                         // ask Windows for real pixels (see common.cpp); used by the DX9 upscale path
 std::wstring SelfDir();
 std::wstring SelfFileName();                 // lower-case file name of this module, e.g. "d3d9.dll"
 HMODULE LoadSystemDll(const wchar_t* name);  // always the copy in System32 / SysWOW64, never a proxy
