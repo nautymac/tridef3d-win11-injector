@@ -60,6 +60,55 @@ there, `--console` together with a game name runs it with no window at all
 and writes the output to `launcher.log` next to the exe. That is how another
 program starts a game through it (Geo Gaming Hub does).
 
+### Games that must be started by their own launcher
+
+Some games only run when their launcher starts them. GTA V's `GTA5.exe`
+won't run on its own: `PlayGTAV.exe` (the Rockstar Games Launcher) has to
+start it. A GP4 install with mods may have CSM start `GP4.exe`. For these,
+pick the game and press **Launch method...**:
+
+- **Automatic** — the default and the old behaviour: Steam games through
+  `steam://`, any other game started from its exe.
+- **Via launcher** — the tool starts the launcher you give it (an exe, a
+  shortcut, or an address such as `steam://rungameid/271590`), then waits
+  for the game's own exe and injects the moment the launcher starts it. A
+  launcher-looking exe in the game's folder (`Play*.exe`, `CSM*.exe`,
+  `*Launcher*.exe`) or the game's Steam address is filled in for you.
+- **Wait only** — the tool starts nothing. Press **Launch in 3D**, then
+  start the game however you normally do: its launcher, a desktop shortcut,
+  CSM. The tool injects the game's exe as soon as it appears.
+
+In both launcher modes the game stays registered by **its own exe**
+(`GTA5.exe`, not `PlayGTAV.exe`). That exe picks the 32/64-bit DLL set, and
+it's the process that gets injected. Only a process at that exact path
+counts; a same-named exe from another folder is left alone. The tool waits
+up to 10 minutes, because a launcher may update or ask you to sign in first.
+The status line counts down, and **Cancel** stops the wait. If the launcher
+starts the exe more than once, each new copy is injected too.
+
+The setting is saved per game in its Ignition registry key (`Play3DMode`,
+`Play3DLauncher`, `Play3DLauncherArgs`), so Geo Gaming Hub and `--console`
+use it as well. To set it for one launch from the command line:
+
+```
+Tridef3D_Play.exe "GTA V" --wait
+Tridef3D_Play.exe "GTA V" --via "D:\Games\Grand Theft Auto V\PlayGTAV.exe"
+Tridef3D_Play.exe "GTA V" --wait --timeout 900
+```
+
+Things to know:
+
+- **GTA V Enhanced (2025) is DirectX 12 only**, and TriDef has no DirectX 12
+  support. Use GTA V Legacy (DirectX 11, `GTA5.exe`).
+- **Story mode only.** GTA Online runs BattlEye anti-cheat. Injecting DLLs
+  into a game protected by anti-cheat can be blocked or get the account
+  banned. This tool does nothing to get around anti-cheat.
+- If the launcher runs the game **as administrator**, a tool without those
+  rights can't inject into it. The log then says so: run TriDef 3D Play as
+  administrator. When the tool runs as administrator, "Via launcher" starts
+  a launcher that has no arguments through Explorer, so the launcher and
+  the game still get your normal rights.
+
 `Tridef3D_Play.exe` is a single self-contained executable — put it anywhere
 and run it, nothing to install. (`Tridef3D_Play.bat` is a leftover wrapper
 from the console days; double-clicking the exe is all you need now.) Works identically for 32-bit or 64-bit games
@@ -140,7 +189,11 @@ through this tool.
   seconds and injects that process too, and stops watching once an injected
   process has stayed up for 15 seconds. Run without administrator rights the
   game starts with normal rights, which is what you want; an exe that itself
-  demands elevation needs the tool started as administrator.
+  demands elevation needs the tool started as administrator. When the stub
+  is not enough (GTA V, GP4 with CSM), set the game's launch method to *Via
+  launcher* or *Wait only* (see
+  [above](#games-that-must-be-started-by-their-own-launcher)). Then the
+  game's exe is never started by the tool; it is only waited for.
 - **Poll for the new process at native speed** (a tight loop over
   `CreateToolhelp32Snapshot`) and inject the instant it appears. No
   thread suspension is used: freezing a brand-new process's only thread

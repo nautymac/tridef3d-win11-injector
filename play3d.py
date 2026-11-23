@@ -4,6 +4,13 @@ One-command TriDef 3D launcher.
 Usage:
     python play3d.py "Gone Home"
     python play3d.py "Gone Home" --dry-run     (just show what it would do)
+    python play3d.py "GTA V" --wait            (start nothing; inject GTA5.exe when its launcher starts it)
+    python play3d.py "GTA V" --via "D:\\Games\\GTA V\\PlayGTAV.exe"   (start that, then wait for GTA5.exe)
+    python play3d.py "GTA V" --wait --timeout 900   (how long to wait, seconds; default 600 in these modes)
+
+Without --wait / --via the game's saved launch method is used (Play3DMode in
+its Ignition key - set in the window's "Launch method" dialog or by Geo Gaming
+Hub); without one, the automatic behaviour below.
 
 Games that are not Steam games (registered in Ignition by their exe, outside
 any Steam library: GOG, EA app, Epic, disc installs ...) are started straight
@@ -239,6 +246,114 @@ def get_registered_entry(game_name):
     return entry
 
 
+# ---- how the game gets started (per game, next to Ignition's own values) ----
+# Play3DMode      "auto" (or absent): Steam games via steam://, any other game from its exe
+#                 "launcher": start Play3DLauncher, then wait for the registered exe
+#                 "wait": start nothing - the user starts the game (its launcher, a shortcut)
+# Play3DLauncher  what "launcher" starts: an exe, a shortcut (.lnk/.url) or a URI (steam://...)
+# Play3DLauncherArgs  arguments for a launcher exe
+# Path stays the game's own exe either way: it decides the 32/64-bit DLL set, and it's the
+# process that gets injected. Geo Gaming Hub writes the same values (TriDef.cs).
+MODE_VALUE, LAUNCHER_VALUE, LAUNCHER_ARGS_VALUE = "Play3DMode", "Play3DLauncher", "Play3DLauncherArgs"
+MODES = ("auto", "launcher", "wait")
+WAIT_TIMEOUT_S = 600   # launcher / wait modes: a launcher may update or ask to sign in first
+
+
+def get_launch_setting(game_name):
+    s = {"mode": "auto", "launcher": "", "args": ""}
+    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as k:
+            for key, value in (("mode", MODE_VALUE), ("launcher", LAUNCHER_VALUE), ("args", LAUNCHER_ARGS_VALUE)):
+                try:
+                    s[key] = (winreg.QueryValueEx(k, value)[0] or "").strip()
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    s["mode"] = s["mode"].lower()
+    if s["mode"] not in MODES or (s["mode"] == "launcher" and not s["launcher"]):
+        s["mode"] = "auto"
+    return s
+
+
+def set_launch_setting(game_name, mode, launcher="", args=""):
+    """Saves the setting; mode "auto" removes our values so the key is back to Ignition's own."""
+    key_path = rf"SOFTWARE\DDD\TriDefIgnition\Games\{game_name}"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as k:
+        if mode == "auto":
+            for value in (MODE_VALUE, LAUNCHER_VALUE, LAUNCHER_ARGS_VALUE):
+                try:
+                    winreg.DeleteValue(k, value)
+                except OSError:
+                    pass
+            return
+        winreg.SetValueEx(k, MODE_VALUE, 0, winreg.REG_SZ, mode)
+        winreg.SetValueEx(k, LAUNCHER_VALUE, 0, winreg.REG_SZ, launcher or "")
+        winreg.SetValueEx(k, LAUNCHER_ARGS_VALUE, 0, winreg.REG_SZ, args or "")
+
+
+def _launcher_rank(exe_name):
+    """0 = most likely the game's launcher, None = not one. play*.exe
+    (PlayGTAV.exe) first, then csm*.exe (GP4's CSM), then *launcher*.exe."""
+    low = exe_name.lower()
+    if not low.endswith(".exe") or "crash" in low or "unins" in low:
+        return None
+    if low.startswith("play"):
+        return 0
+    if low.startswith("csm"):
+        return 1
+    if "launcher" in low:
+        return 2
+    return None
+
+
+def suggest_launcher(exe_path, appid=None):
+    """A guess at what starts this game, for pre-filling the setting: a
+    launcher-looking exe in the game's folder or the one above it
+    (PlayGTAV.exe next to GTA5.exe), else the Steam URI for a Steam game,
+    else ''. Only a suggestion - the user confirms it."""
+    if exe_path:
+        target = os.path.basename(exe_path).lower()
+        here = os.path.dirname(exe_path)
+        best = None
+        for depth, folder in enumerate((here, os.path.dirname(here))):
+            try:
+                names = sorted(os.listdir(folder))
+            except OSError:
+                continue
+            for name in names:
+                rank = _launcher_rank(name)
+                if rank is None or name.lower() == target or not os.path.isfile(os.path.join(folder, name)):
+                    continue
+                if best is None or (depth, rank) < best[0]:
+                    best = ((depth, rank), os.path.join(folder, name))
+        if best:
+            return best[1]
+    if appid:
+        return f"steam://rungameid/{appid}"
+    return ""
+
+
+def is_uri(s):
+    return bool(re.match(r"^[a-z][a-z0-9+.-]+://", s or "", re.IGNORECASE))
+
+
+def launcher_launch(launcher, args=""):
+    """(launch_uri, launch_cmd, launch_cwd) for injector.poll_launch_and_inject.
+    A URI or shortcut goes through the shell; an exe is started in its own
+    folder. When this process is elevated, the launcher (and so the game) is
+    started through Explorer instead, which runs it with the user's normal
+    rights - an elevated launcher would make the game run as administrator."""
+    launcher = launcher.strip().strip('"')
+    if injector.is_elevated() and not args:
+        return None, ["explorer.exe", launcher], None
+    if is_uri(launcher) or not launcher.lower().endswith(".exe"):
+        return launcher, None, None
+    cmd = f'"{launcher}" {args}' if args else [launcher]
+    return None, cmd, os.path.dirname(launcher)
+
+
 def get_registered_exe(game_name):
     """The game exe Ignition itself has on record, if any. Games added to
     Ignition as a Steam title store Path=steam.exe (useless here), but
@@ -372,15 +487,53 @@ def find_steam_game_exe(game_name, appid):
     return exe_path
 
 
-def play3d(game_name, dry_run=False, sr=False):
+def play3d(game_name, dry_run=False, sr=False, mode=None, via=None, timeout_s=None,
+           cancel=None, progress=None):
+    """mode / via override the game's saved setting (get_launch_setting):
+    mode "wait" starts nothing, via=<launcher> means mode "launcher" with that
+    launcher. cancel (threading.Event) and progress(elapsed, timeout) are
+    passed on to the injector's wait."""
     print(f"=== TriDef 3D launch: {game_name} ===")
+
+    setting = get_launch_setting(game_name)
+    launcher, launcher_args = setting["launcher"], setting["args"]
+    if via:
+        mode, launcher, launcher_args = "launcher", via, ""
+    mode = mode or setting["mode"]
+    if mode == "launcher" and not launcher:
+        print("ERROR: launch method is 'launcher' but no launcher is set for this game.")
+        return False
 
     appid = get_tridef_game_appid(game_name)
     set_ignition_last_game(game_name)
 
     launch_uri = launch_cmd = launch_cwd = None
     follow_relaunch_s = 0
-    if appid:
+    expected_path = None
+    wait_hint = None
+    if mode in ("launcher", "wait"):
+        # The registered exe is the game; something else starts it. We never
+        # start that exe ourselves - only wait for it and inject the moment it
+        # appears, wherever it came from (its launcher, CSM, a shortcut...).
+        exe_path = get_registered_exe(game_name) or (find_steam_game_exe(game_name, appid) if appid else None)
+        if not exe_path:
+            entry = get_registered_entry(game_name)
+            print(f"ERROR: no game exe on record for {game_name!r} (Path={entry['Path']!r}). "
+                  f"Register the game by its own exe (e.g. GTA5.exe, not PlayGTAV.exe).")
+            return False
+        expected_path = exe_path
+        follow_relaunch_s = 90          # a launcher may start the exe more than once
+        if mode == "launcher":
+            launch_uri, launch_cmd, launch_cwd = launcher_launch(launcher, launcher_args)
+            print(f"Launch method: start {launcher}{' ' + launcher_args if launcher_args else ''}, "
+                  f"then wait for {os.path.basename(exe_path)}")
+            wait_hint = f"Start the game in {os.path.basename(launcher.rstrip('/'))} if it is waiting for you."
+        else:
+            print(f"Launch method: wait for {os.path.basename(exe_path)} - nothing is started by this tool")
+            wait_hint = "Start the game from its launcher or shortcut now."
+        if timeout_s is None:
+            timeout_s = WAIT_TIMEOUT_S
+    elif appid:
         print(f"Steam AppID: {appid}")
         exe_path = find_steam_game_exe(game_name, appid)
         if not exe_path:
@@ -453,8 +606,11 @@ def play3d(game_name, dry_run=False, sr=False):
     # difference, so that variant was removed.)
     if launch_uri:
         print(f"Launch: start {launch_uri}")
+    elif launch_cmd:
+        shown = launch_cmd if isinstance(launch_cmd, str) else " ".join(launch_cmd)
+        print(f"Launch: {shown}" + (f" (in {launch_cwd})" if launch_cwd else ""))
     else:
-        print(f"Launch: {launch_cmd if isinstance(launch_cmd, str) else launch_cmd[0]} (in {launch_cwd})")
+        print(f"Launch: none - waiting for {exe_path}")
 
     if dry_run:
         print("(dry run - not actually launching)")
@@ -464,15 +620,17 @@ def play3d(game_name, dry_run=False, sr=False):
     # window (Binary Domain) don't start the real exe until the user clicks
     # Start in it, and that can take a while.
     pid = injector.poll_launch_and_inject(image_name, launch_uri, standard_dlls,
-                                           timeout_s=180,
+                                           timeout_s=timeout_s or 180,
                                            injector_python=injector_python,
                                            launch_cmd=launch_cmd, launch_cwd=launch_cwd,
-                                           follow_relaunch_s=follow_relaunch_s)
+                                           follow_relaunch_s=follow_relaunch_s,
+                                           expected_path=expected_path, cancel=cancel,
+                                           progress=progress, wait_hint=wait_hint)
     if pid:
         print(f"\nSUCCESS: {game_name} running as PID {pid} with TriDef 3D injected.")
         return True
     else:
-        print(f"\nFAILED: never saw {image_name} appear.")
+        print(f"\nFAILED: {image_name} was not injected (see above).")
         return False
 
 
@@ -586,8 +744,11 @@ def main(default_sr=False):
     console = '--console' in sys.argv
     # --steam-flags / --no-steam-flags were options of a removed variant; still
     # swallowed so old shortcuts and scripts that pass them keep working.
-    flags = ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr', '--console')
+    flags = ('--dry-run', '--steam-flags', '--no-steam-flags', '--sr', '--console', '--wait')
     lang = None
+    via = None
+    timeout_s = None
+    mode = 'wait' if '--wait' in sys.argv else None
     args = []
     it = iter(sys.argv[1:])
     for a in it:
@@ -595,14 +756,27 @@ def main(default_sr=False):
             lang = next(it, None)
         elif a.startswith('--lang='):
             lang = a.split('=', 1)[1]
+        elif a == '--via':
+            via = next(it, None)
+        elif a.startswith('--via='):
+            via = a.split('=', 1)[1]
+        elif a == '--timeout' or a.startswith('--timeout='):
+            v = a.split('=', 1)[1] if '=' in a else next(it, None)
+            try:
+                timeout_s = max(5, int(v))
+            except (TypeError, ValueError):
+                pass
         else:
             args.append(a)
+    if mode == 'wait':
+        via = None       # --wait wins: start nothing
     positional = [a for a in args if a not in flags]
     game_name = positional[0] if positional else None
 
     if not console:
         import gui
-        gui.run(sr=sr, game=game_name, dry_run=dry_run, lang=lang)   # --lang ko|en, default: Windows UI language
+        gui.run(sr=sr, game=game_name, dry_run=dry_run, lang=lang,   # --lang ko|en, default: Windows UI language
+                mode=mode, via=via, timeout_s=timeout_s)
         return
 
     headless = sys.stdout is None
@@ -625,7 +799,7 @@ def main(default_sr=False):
         sys.exit(1)
 
     try:
-        ok = play3d(game_name, dry_run=dry_run, sr=sr)
+        ok = play3d(game_name, dry_run=dry_run, sr=sr, mode=mode, via=via, timeout_s=timeout_s)
     except Exception:
         if not headless:
             raise

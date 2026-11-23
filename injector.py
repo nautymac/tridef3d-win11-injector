@@ -511,42 +511,119 @@ def inject_via_external_python(helper_exe, pid, dll_paths):
     return result.returncode == 0
 
 
+ERROR_ACCESS_DENIED = 5
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+
+class AccessDenied(Exception):
+    """The game process can't be opened for injection - it runs with higher
+    rights (as administrator) than this injector."""
+
+
+def is_elevated():
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def get_pid_image_path(pid):
+    """Full path of a running process's exe, or None when it can't be read.
+    PROCESS_QUERY_LIMITED_INFORMATION is enough and is granted even for an
+    elevated process of the same user."""
+    h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return None
+    try:
+        return get_process_image_path(h)
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def _same_path(a, b):
+    try:
+        return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+    except Exception:
+        return False
+
+
+def _new_target_pids(image_name, exclude, expected_path, rejected):
+    """New processes named image_name, minus `exclude`. With expected_path,
+    only the one at that exact path counts: another install's exe of the same
+    name is not this game. Processes ruled out that way are remembered in
+    `rejected` so their path is read only once. A process whose path can't be
+    read is accepted - better a stray injection than a missed game."""
+    new = get_pids_by_name(image_name) - exclude - rejected
+    if not expected_path or not new:
+        return new
+    ok = set()
+    for pid in new:
+        path = get_pid_image_path(pid)
+        if path is None or _same_path(path, expected_path):
+            ok.add(pid)
+        else:
+            print(f"  ignoring PID {pid}: {path} is not {expected_path}")
+            rejected.add(pid)
+    return ok
+
+
 def _inject_into(pid, dll_paths, injector_python, suspend_first):
+    """Raises AccessDenied when the process can't be opened because it has
+    higher rights than we do; everything else is logged and carried on."""
     handles = suspend_all_threads(pid) if suspend_first else []
     if suspend_first:
         print(f"  suspended {len(handles)} thread(s)")
 
-    if injector_python:
-        inject_via_external_python(injector_python, pid, dll_paths)
-    else:
-        access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
-        hProcess = kernel32.OpenProcess(access, False, pid)
-        if hProcess:
-            for dll in dll_paths:
-                inject_one(hProcess, dll)
-            kernel32.CloseHandle(hProcess)
+    try:
+        if injector_python:
+            if not inject_via_external_python(injector_python, pid, dll_paths):
+                h = kernel32.OpenProcess(PROCESS_VM_OPERATION, False, pid)
+                err = ctypes.get_last_error()
+                if h:
+                    kernel32.CloseHandle(h)
+                elif err == ERROR_ACCESS_DENIED:
+                    raise AccessDenied()
         else:
-            print(f"OpenProcess({pid}) failed err={ctypes.get_last_error()}")
+            access = (PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ)
+            hProcess = kernel32.OpenProcess(access, False, pid)
+            if hProcess:
+                for dll in dll_paths:
+                    inject_one(hProcess, dll)
+                kernel32.CloseHandle(hProcess)
+            else:
+                err = ctypes.get_last_error()
+                print(f"OpenProcess({pid}) failed err={err}")
+                if err == ERROR_ACCESS_DENIED:
+                    raise AccessDenied()
+    finally:
+        if suspend_first:
+            resume_threads(handles)
 
-    if suspend_first:
-        resume_threads(handles)
+
+def _print_access_denied(image_name):
+    print(f"ERROR: {image_name} runs as administrator, so this injector (not elevated) can't inject into it. "
+          f"Close the game, run TriDef 3D Play as administrator and try again.")
 
 
 def _follow_relaunch(image_name, baseline, first_pid, dll_paths, injector_python, suspend_first,
-                     follow_s, settle_s=15.0, poll_s=0.003):
+                     follow_s, settle_s=15.0, poll_s=0.003, expected_path=None, cancel=None):
     """After the first injection: if the game exits and comes back as a new
     process (a store launcher relaunching it), inject that one too. Returns
     the pid of the last process injected. Stops once an injected process has
     been up for settle_s, or follow_s after the last injection."""
     import time
     injected = {first_pid}
+    rejected = set()
     pid = first_pid
     t_last = time.time()
     told = False
     while time.time() - t_last < follow_s:
+        if cancel is not None and cancel.is_set():
+            print("cancelled")
+            break
         time.sleep(poll_s)
         current = get_pids_by_name(image_name)
-        new_pids = current - injected - baseline
+        new_pids = _new_target_pids(image_name, injected | baseline, expected_path, rejected)
         if new_pids:
             pid = sorted(new_pids)[0]
             print(f"RELAUNCHED as PID {pid} ({time.time()-t_last:.1f}s after the previous one) - injecting again")
@@ -567,7 +644,8 @@ def _follow_relaunch(image_name, baseline, first_pid, dll_paths, injector_python
 
 def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=20, poll_s=0.001,
                             suspend_first=False, injector_python=None, launch_cmd=None,
-                            launch_cwd=None, follow_relaunch_s=0):
+                            launch_cwd=None, follow_relaunch_s=0, expected_path=None,
+                            cancel=None, progress=None, wait_hint=None):
     """Poll for a NEW process named image_name appearing and inject into it
     as fast as possible, racing to beat its own D3D device/resource
     creation. If launch_uri_or_none is given, it is triggered via
@@ -584,6 +662,17 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
     and exits; the launcher then starts the real game as a new process with
     the same image name. That process is injected too. Watching stops early
     once an injected process has stayed up for a while.
+
+    Neither launch_uri_or_none nor launch_cmd: nothing is started, we only
+    wait - the user starts the game themselves (from its launcher or a
+    shortcut). That is how a game is caught that refuses to run unless its
+    own launcher started it (GTA V: GTA5.exe only via PlayGTAV.exe).
+
+    expected_path: only a process at that exact exe path counts, so another
+    install's exe with the same name is left alone. cancel: a
+    threading.Event that stops the wait. progress(elapsed_s, timeout_s) is
+    called about once a second while waiting. wait_hint replaces the text of
+    the periodic "still waiting" reminder.
 
     suspend_first=True freezes every thread before injecting, which sounds
     safer but usually deadlocks: LoadLibraryW needs the process's loader
@@ -614,39 +703,62 @@ def poll_launch_and_inject(image_name, launch_uri_or_none, dll_paths, timeout_s=
             return None
         print(f"triggered launch: {launch_cmd}" + (f" (in {launch_cwd})" if launch_cwd else ""))
     elif launch_uri_or_none:
-        import os
-        os.startfile(launch_uri_or_none)   # ShellExecute, no console window involved
+        try:
+            os.startfile(launch_uri_or_none)   # ShellExecute, no console window involved
+        except OSError as e:
+            print(f"ERROR: could not start {launch_uri_or_none}: {e}")
+            return None
         print(f"triggered launch: {launch_uri_or_none}")
+    else:
+        # The line Geo Gaming Hub looks for in launcher.log before it starts the
+        # game's launcher itself (with the user's own rights) - keep its wording.
+        print(f"WAITING for {image_name}" + (f" ({expected_path})" if expected_path else "")
+              + f" for up to {timeout_s:.0f}s - start the game from its launcher or shortcut now.")
 
     # Only a process with the *target* image name counts. Anything else
     # Steam starts first - a configuration/launcher window such as Binary
     # Domain's BinaryDomainConfiguration.exe - is simply not it, and we keep
     # waiting until the user starts the real game from that window. That is
     # why the timeout is long and there's a periodic reminder.
+    hint = wait_hint or "If a launcher/configuration window opened, start the game from it."
+    rejected = set()
     start = time.time()
     next_note = 8.0
+    next_progress = 0.0
     while time.time() - start < timeout_s:
+        if cancel is not None and cancel.is_set():
+            print("cancelled - stopped waiting")
+            return None
         elapsed = time.time() - start
+        if progress is not None and elapsed >= next_progress:
+            try:
+                progress(elapsed, timeout_s)
+            except Exception:
+                pass
+            next_progress = elapsed + 1.0
         if elapsed >= next_note:
-            print(f"  ...still waiting for {image_name} ({elapsed:.0f}s). If a launcher/"
-                  f"configuration window opened, start the game from it.")
+            print(f"  ...still waiting for {image_name} ({elapsed:.0f}s of {timeout_s:.0f}s). {hint}")
             next_note += 15.0
-        current = get_pids_by_name(image_name)
-        new_pids = current - baseline
+        new_pids = _new_target_pids(image_name, baseline, expected_path, rejected)
         if new_pids:
             pid = sorted(new_pids)[0]
             t_found = time.time()
             print(f"NEW PID {pid} detected after {t_found-start:.4f}s")
 
-            _inject_into(pid, dll_paths, injector_python, suspend_first)
-            print(f"done, {time.time()-t_found:.4f}s after detection")
-            if follow_relaunch_s > 0:
-                pid = _follow_relaunch(image_name, baseline, pid, dll_paths, injector_python,
-                                       suspend_first, follow_relaunch_s)
+            try:
+                _inject_into(pid, dll_paths, injector_python, suspend_first)
+                print(f"done, {time.time()-t_found:.4f}s after detection")
+                if follow_relaunch_s > 0:
+                    pid = _follow_relaunch(image_name, baseline, pid, dll_paths, injector_python,
+                                           suspend_first, follow_relaunch_s,
+                                           expected_path=expected_path, cancel=cancel)
+            except AccessDenied:
+                _print_access_denied(image_name)
+                return None
             return pid
         time.sleep(poll_s)
 
-    print(f"no new {image_name} process seen within {timeout_s}s")
+    print(f"no new {image_name} process seen within {timeout_s:.0f}s")
     return None
 
 
